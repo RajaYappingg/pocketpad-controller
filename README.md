@@ -1,167 +1,314 @@
-# PocketPad
+<div align="center">
 
-**Ultra-low-latency Wireless Android-to-Windows Virtual Xbox 360 Controller**
+# 🎮 PocketPad
 
-PocketPad transforms your Android phone into a genuine, hardware-level virtual Xbox 360 controller on Windows 10/11 x64 over your local Wi-Fi network. No Android APK installation required — it runs directly in mobile Chrome with multi-touch Pointer Events and zero-allocation binary WebSocket frames.
+**Turn any Android phone into a real Xbox 360 controller for Windows — over Wi-Fi, no app install.**
 
----
+[![Windows](https://img.shields.io/badge/Windows-10%2F11%20x64-0078D6?style=flat-square&logo=windows)](https://github.com/nefarius/ViGEmBus/releases)
+[![Rust](https://img.shields.io/badge/host-Rust-dea584?style=flat-square&logo=rust)](./host)
+[![Preact](https://img.shields.io/badge/client-Preact-673ab8?style=flat-square&logo=preact)](./web)
+[![License: MIT](https://img.shields.io/badge/License-MIT-16d98a?style=flat-square)](./LICENSE)
 
-## ⚡ Key Highlights
+*Genuine XInput emulation · ~2–6 ms Wi-Fi RTT · single self-contained `.exe` · up to 4 players*
 
-- **Genuine XInput / Xbox 360 Emulation**: Windows detects an actual Xbox 360 Gamepad via ViGEmBus. Games (even those without keyboard remapping) work immediately.
-- **Zero Android App Needed**: Scan the desktop QR code to open the gamepad interface in mobile Chrome.
-- **Ultra-Low Latency (~2-6 ms Wi-Fi RTT)**: Zero heap allocations in the input loop. Fixed 19-byte binary WebSocket packet stream at 60–120Hz.
-- **Single Self-Contained Binary**: The Rust Windows host embeds all HTML, CSS, and Preact assets. No Node.js, Python, Java, or Electron runtime required to run.
-- **Hardware Multi-Touch**: Simultaneous dual analog sticks, triggers, face buttons, and bumpers using browser Pointer Capture.
-- **Four-Player Support**: Up to four phones can connect at once, each mapped to its own virtual Xbox 360 controller slot.
-- **Safety Watchdog (250 ms / 2.0 s)**: Automatic neutral state reset after 250 ms of stale input prevents stuck buttons or runaway axes.
-- **Session Security**: 6-character pairing codes with per-IP rate limiting, global rotation after 20 failed guesses, and IP-bound reconnect tokens (8 h, revoked on disconnect). Pairing codes and client IPs are only disclosed to the host dashboard (`localhost`); LAN callers get redacted status. Disconnect is host-only.
-- **Control Scale**: Phone layout zoom (0.8–1.2×) in Controller Settings and the dashboard, plus a small-landscape layout that fits 568 px-wide phones.
+</div>
 
 ---
 
-## 🎮 Input Pipeline Architecture
+## ✨ Why PocketPad?
+
+| | |
+|:---|:---|
+| 🎮 **Real hardware-level gamepad** | Windows sees an actual Xbox 360 controller via ViGEmBus. Games work immediately — even ones with no keyboard-remapping option. |
+| 📱 **No Android app** | Scan the desktop QR code and play in mobile Chrome. Multi-touch Pointer Events, zero installs. |
+| ⚡ **Ultra-low latency** | Zero-allocation input loop. Fixed 19-byte binary WebSocket frames at up to 120 Hz. |
+| 📦 **One binary** | The Rust host embeds the entire dashboard + controller UI. No Node, Python, Java, or Electron needed to run. |
+| 👥 **Four players** | Up to four phones connect at once, each on its own virtual controller slot. |
+| 🛡️ **Failsafe by design** | 250 ms neutral-reset watchdog + 2 s session drop. A dead phone can never leave a stuck button. |
+| 🔐 **LAN-grade security** | 6-char pairing codes, per-IP rate limits, code rotation under brute force, IP-bound short-lived tokens. |
+
+---
+
+## 🗺️ Contents
+
+- [How it works](#-how-it-works)
+- [Binary protocol](#-binary-protocol)
+- [Quick start](#-quick-start)
+- [Security model](#-security-model)
+- [Building from source](#️-building-from-source)
+- [Testing & CI](#-testing--ci)
+- [Configuration](#️-configuration)
+- [Troubleshooting](#-troubleshooting)
+- [Project layout](#-project-layout)
+- [Future work](#-future-work)
+- [Safety & failsafe](#️-safety--failsafe)
+- [License](#-license)
+
+---
+
+## 🎮 How It Works
 
 ```
 Android Phone (Chrome)
-    ├── Touch Pointer Events (Zero-DOM transform)
-    └── 19-byte Binary Packets (ArrayBuffer over WebSocket)
-            │  (Local Wi-Fi / LAN)
-            ▼
-Windows PC (PocketPad Host)
-    ├── Axum WebSocket Server (Tokio async)
-    ├── Watchdog Failsafe (250 ms neutral reset)
-    ├── Four Independent Controller Sessions
-    ├── VirtualController Trait Abstraction
-    └── ViGEmBus Kernel Driver
-            │  (XInput)
-            ▼
-Games / Steam / Emulators
+ ├── Touch Pointer Events (per-frame coalesced, zero-alloc encoder)
+ └── 19-byte binary frames ──► ArrayBuffer over WebSocket ──┐
+                                                             │  Local Wi-Fi / LAN
+Windows PC (PocketPad Host)                                  │
+ ├── Axum WebSocket server (Tokio async)                  ◄──┘
+ ├── Sequence + flood + size guards
+ ├── XInput deadzone sanitize (±7849)
+ ├── Four independent controller sessions
+ ├── Watchdog failsafe (250 ms neutral reset / 2 s drop)
+ ├── VirtualController trait abstraction
+ └── ViGEmBus kernel driver ──► XInput ──► Games / Steam / Emulators
 ```
 
+The phone sends only *what changed* (plus a 100 ms heartbeat); the host validates, sanitizes, and pushes state into the kernel driver. The dashboard polls `/api/status` and talks to `/api/disconnect` — both host-only where it matters (see [Security model](#-security-model)).
+
 ---
 
-## 📦 Binary Protocol Specification
+## 📦 Binary Protocol
 
-Inputs are streamed over WebSocket using a fixed 19-byte binary layout (little-endian):
+Little-endian binary frames over a single WebSocket. Exact lengths are enforced — anything else drops the frame, and 50 consecutive malformed frames drop the socket.
 
-| Byte Offset | Field | Type | Description |
+**Input (`0x01`, 19 bytes, phone → host):**
+
+| Bytes | Field | Type | Notes |
 |:---|:---|:---|:---|
-| `0` | Magic | `u8` | Always `0x50` ('P') |
-| `1` | Version | `u8` | Protocol version (`0x01`) |
-| `2` | Packet Type | `u8` | `0x01` = Input, `0x02` = Ping, `0x03` = Pong |
-| `3..6` | Sequence | `u32 LE` | Monotonic frame sequence counter |
-| `7..8` | Buttons | `u16 LE` | XInput button bitfield (A, B, X, Y, D-Pad, etc.) |
-| `9` | Left Trigger | `u8` | LT (0 = released, 255 = fully depressed) |
-| `10` | Right Trigger | `u8` | RT (0 = released, 255 = fully depressed) |
-| `11..12` | Thumb LX | `i16 LE` | Left stick X (-32768 to 32767) |
-| `13..14` | Thumb LY | `i16 LE` | Left stick Y (-32768 to 32767, Up is positive) |
-| `15..16` | Thumb RX | `i16 LE` | Right stick X (-32768 to 32767) |
-| `17..18` | Thumb RY | `i16 LE` | Right stick Y (-32768 to 32767, Up is positive) |
+| `0` | Magic | `u8` | Always `0x50` (`'P'`) |
+| `1` | Version | `u8` | `0x01` |
+| `2` | Type | `u8` | `0x01` = Input |
+| `3–6` | Sequence | `u32 LE` | Monotonic counter; replays/dupes dropped, jumps > 128 rejected |
+| `7–8` | Buttons | `u16 LE` | XInput bitfield (A, B, X, Y, D-pad, bumpers, stick clicks, Guide…) |
+| `9` | Left trigger | `u8` | `0` released … `255` fully depressed |
+| `10` | Right trigger | `u8` | Same |
+| `11–12` | Thumb LX | `i16 LE` | `-32768` … `32767` |
+| `13–14` | Thumb LY | `i16 LE` | Up is positive |
+| `15–16` | Thumb RX | `i16 LE` | Same |
+| `17–18` | Thumb RY | `i16 LE` | Up is positive |
+
+**Keep-alive & feedback:**
+
+| Type | Size | Direction | Purpose |
+|:---|:---|:---|:---|
+| `0x02` Ping | 7 B | either | RTT keepalive (`u32` timestamp). Server pings every 5 s and measures the reply itself; client pings every 1 s. |
+| `0x03` Pong | 7 B | either | Echo of a Ping timestamp. |
+| `0x04` Rumble | 5 B | host → phone | `(large_motor, small_motor)` force feedback → phone haptics. |
+
+> Parity is enforced in CI on both sides: `host/src/protocol.rs` unit tests and `web/src/protocol/binary_protocol.test.ts` (`pnpm test`) cover the same layouts, so drift breaks the build.
 
 ---
 
-## 🚀 Quick Start Guide
+## 🚀 Quick Start
 
-### 1. Requirements
+### Requirements
 
-- **Windows 10 / 11 x64**
-- **Android Smartphone** connected to the same Wi-Fi router
-- **ViGEmBus Driver** (Virtual Gamepad Emulation Bus)
+- 🖥️ **Windows 10 / 11 x64**
+- 📱 **Android phone** on the same Wi-Fi network (Chrome recommended)
+- 🎮 **ViGEmBus driver** (one-time setup below)
 
-### 2. ViGEmBus Driver Setup
+### 1 · Install ViGEmBus
 
-PocketPad relies on the established, open-source [ViGEmBus driver](https://github.com/nefarius/ViGEmBus) by Nefarius to register authentic virtual Xbox 360 controllers in the Windows kernel:
+PocketPad uses the open-source [ViGEmBus driver](https://github.com/nefarius/ViGEmBus) by Nefarius for authentic Xbox 360 emulation:
 
-1. Download the latest installer from the official release page:
-   [ViGEmBus Release v1.22.0](https://github.com/nefarius/ViGEmBus/releases)
-2. Run `ViGEmBus_Setup_1.22.0.exe` and complete installation.
-3. *Note on driver status*: ViGEmBus is archived and feature-complete. It remains the gold standard for Xbox 360 emulation on Windows 10/11. PocketPad encapsulates it behind a clean `VirtualController` trait to allow future driver backends without breaking changes.
+1. Download [ViGEmBus v1.22.0](https://github.com/nefarius/ViGEmBus/releases) and run the installer.
+2. Reboot if the installer asks — Windows only picks up the virtual bus after a restart.
+3. ViGEmBus is archived but feature-complete; it remains the gold standard for 360 emulation on Windows 10/11. PocketPad hides it behind a `VirtualController` trait, so future backends plug in without breaking changes.
 
-### 3. Launching PocketPad
+### 2 · Launch
 
-1. Run `pocketpad.exe` (or `.\scripts\run-dev.ps1`). Flags: `--port 3000` (or `POCKETPAD_PORT` env; falls back to `port+1` if occupied), `--no-browser` to skip auto-open.
-2. The local dashboard opens in your browser (`http://localhost:3000/?mode=dashboard`).
-3. Scan the displayed **QR Code** using your phone camera or enter the local IP URL.
-4. Enter the 6-character pairing code shown on your desktop screen.
-5. Your phone becomes an instant landscape controller! Repeat the pairing URL on up to four phones for local multiplayer.
+```powershell
+.\bin\pocketpad.exe
+# or from source:  .\scripts\run-dev.ps1
+```
 
-Each connected phone receives an independent virtual Xbox 360 controller. If all four slots are occupied, additional connections are rejected until a phone disconnects or the desktop dashboard uses **Disconnect Phone Session** (dashboard-only; LAN requests get `403`).
+| Flag / env | Effect |
+|:---|:---|
+| `--port 3000` · `-p 3000` · `--port=3000` · `POCKETPAD_PORT=3000` | Bind port (default `3000`; auto-falls-back to `port+1` if occupied) |
+| `--no-browser` | Don't auto-open the dashboard |
 
-The pairing code is used for the initial connection. PocketPad then issues a session token to the browser, which is used for reconnects, expires after 8 hours, is bound to the client IP address, and is revoked on disconnect. After 20 failed guesses LAN-wide the code rotates. `GET /api/status` redacts the pairing code and client IPs for non-`localhost` callers, so viewing the dashboard remotely never leaks credentials — pair from the host screen.
+The dashboard opens at `http://localhost:3000/?mode=dashboard`.
 
-### 4. Verifying with Windows `joy.cpl`
+### 3 · Pair your phone
 
-1. Press `Win + R` on Windows.
-2. Type `joy.cpl` and hit Enter.
-3. You will see **"Controller (Xbox 360 For Windows)"** listed with status **OK**.
-4. Double-click the controller to see the real-time button test grid, triggers, and axes respond to your phone touches.
+1. Scan the **QR code** on the dashboard with your phone camera — or open the shown LAN URL in Chrome.
+2. Enter the **6-character pairing code** from the host screen.
+3. Flip to landscape and play! 🎮 Repeat on up to three more phones for local multiplayer — each gets its own controller slot. Full slots reject newcomers with `409` until a slot frees up or the dashboard disconnects one.
+
+> The code is for first contact only. The host immediately issues an **IP-bound reconnect token (8 h)** that lives in the phone's `localStorage` — later drops reconnect silently with zero typing. Tokens survive transient disconnects and are revoked only when the dashboard explicitly kicks the session.
+
+### 4 · Verify in Windows
+
+1. Press `Win + R`, type `joy.cpl`, hit Enter.
+2. You should see **Controller (Xbox 360 for Windows)** — status **OK**.
+3. Double-click it: buttons, triggers, and sticks respond live to your phone.
+
+---
+
+## 🔐 Security Model
+
+Designed for a **trusted home LAN** — not an open café network (there is no TLS yet; see [Future work](#-future-work)).
+
+- **Pairing codes**: 6 chars from a 32-symbol alphabet (~1 B combos), compared in constant time, case/whitespace tolerant. 5 failures per IP per 30 s → `429`; 20 failures LAN-wide rotates the code out from under the attacker.
+- **Tokens**: 128-bit random, IP-bound (loopback forms treated as equivalent), 8 h TTL, sliding cleanup every 30 s. Survive socket drops so reconnects are seamless; revoked on host kick.
+- **No LAN leakage**: `GET /api/status` returns the pairing code and client IPs **only to `localhost`**. Remote viewers get redacted fields — pair from the host screen. `POST /api/disconnect` is host-only (`403` otherwise).
+- **Handshake hygiene**: strict `Origin` allowlist (exact private-range match — `192.168.evil.com` tricks rejected), `401` vs `429` so users know whether to retype or wait.
+- **Data-plane guards**: exact-length frames, 5 ms input floor (floods), 50-strike disconnect, sequence window of 128, `rttMs` clamped to 5000 ms, client `Pong`/`Rumble` treated as probes.
 
 ---
 
 ## 🛠️ Building from Source
 
-PocketPad builds with **PNPM** for the web client and **Cargo** for the Windows executable.
-
-### Prerequisites
-
-- Node.js 18+ and PNPM (`corepack enable` or `npm i -g pnpm`)
-- Rust Stable (`rustup-init.exe`)
-- ViGEmBus installed for up to four virtual Xbox 360 controller targets
-
-### One-Command Build Script
+**Prerequisites:** Node.js 18+ with PNPM (`corepack enable`) · Rust stable (`rustup-init.exe`) · ViGEmBus for live controller targets.
 
 ```powershell
-.\scripts\build.ps1          # full build (web + release exe → bin/pocketpad.exe + SHA256)
-.\scripts\build.ps1 -SkipFrontend   # reuse web/dist (must exist)
-.\scripts\build.ps1 -NoClean        # incremental Rust build (faster iteration)
+.\scripts\build.ps1               # full build → bin/pocketpad.exe + SHA256
+.\scripts\build.ps1 -SkipFrontend # reuse web/dist (must already exist)
+.\scripts\build.ps1 -NoClean      # incremental Rust build (faster iteration)
+.\scripts\build.ps1 -SkipBackend  # frontend only
 ```
 
-This compiles:
-1. `web/` using Vite + TypeScript + Preact into `web/dist` (`pnpm install --frozen-lockfile`).
-2. `host/` using Cargo with LTO and stripped symbols into `bin/pocketpad.exe` (`cargo build --locked --release`).
+What it does:
 
-`bin/`, `web/dist/`, and `target/` are gitignored — a fresh clone has no binary or UI; you must build first. Expect a multi-minute fat-LTO link and ~1 GB `target/` disk usage. If the exe is locked by a running instance or antivirus, the script retries the copy 5× and prints the SHA256 on success.
+1. `web/` → Vite + TypeScript + Preact → `web/dist` (`pnpm install --frozen-lockfile`, reproducible).
+2. `host/` → Cargo `--locked --release` (fat LTO, stripped) → `bin/pocketpad.exe` (~2 MB, UI embedded).
 
-The host binds its HTTP/WebSocket server to the local network so phones can connect (default port `3000`, `--port`/`POCKETPAD_PORT` override, `port+1` fallback). The embedded dashboard and controller UI are served from the same origin with relative asset URLs (`base: './'`, relative manifest/service-worker paths) so reverse-proxy subpaths work; cross-origin requests are not enabled by default. For frontend iteration without a Rust rebuild, run `pnpm --dir web dev` (Vite `:5173`, proxies `/api` + `/ws` to `:3000`) alongside `cargo run`.
+<details>
+<summary><b>Build notes & gotchas</b></summary>
 
-Input packets must have the exact documented length (oversize frames are dropped; 50 consecutive malformed frames drop the socket). Sequence jumps over 128 are rejected as skip attacks. Inputs faster than one per 5 ms are treated as floods. Sticks get the XInput deadzone (±7849). The host periodically removes expired pairing tokens (every 30 s) and records round-trip latency in the dashboard diagnostics: the server pings each phone every 5 s and measures the Pong reply itself (client `rttMs` self-reports are clamped to 5000 ms and serve as fallback). Set `RUST_LOG=debug` for WebSocket auth/Origin diagnostics.
+- `bin/`, `web/dist/`, `target/` are gitignored — a fresh clone has **no binary or UI**. Build first.
+- Expect a multi-minute LTO link and ~1 GB of `target/` disk.
+- If the copy fails with a file lock, a `pocketpad.exe` is still running (or AV is scanning) — the script retries 5×, then prints the SHA256.
+- `cargo run` from a checkout without `web/dist` fails fast with a "build the frontend first" message instead of a cryptic embed error.
+- Frontend-only iteration: `pnpm --dir web dev` (Vite on `:5173`, proxies `/api` + `/ws` to the Rust host on `:3000`) alongside `cargo run`. No Rust rebuild per CSS tweak.
+- `RUST_LOG=debug` turns on WebSocket auth/Origin diagnostics.
 
-Protocol parity is enforced on both sides: `host/src/protocol.rs` unit tests and `web/src/protocol/binary_protocol.test.ts` (`pnpm test` / `vitest run`) cover the same 19B input / 7B ping-pong / 5B rumble layouts, so drift breaks CI.
-
-### Running Tests
-
-```powershell
-.\scripts\test.ps1   # tsc --noEmit + vitest + cargo test --locked --all-targets + clippy -D warnings + fmt --check
-```
-
-CI (`.github/workflows/ci.yml`, Windows) runs the same gates plus the release build and uploads `pocketpad.exe` + `.sha256`. Dependabot tracks Cargo and npm weekly. `Cargo.lock` is committed for reproducible builds.
-
-Dashboard notes: Settings pills scroll to their card (nothing is hidden); host-only rows are labeled display-only (port comes from `--port`/`POCKETPAD_PORT`, watchdog thresholds live in the host). The Controllers page shows real session telemetry (packets/RTT/IP) instead of a fake live-input preview.
+</details>
 
 ---
 
-## 🔮 Future Work (deferred deliberately)
+## ✅ Testing & CI
 
-- **TLS (`rustls`)**: `https`/`wss` option for untrusted LANs. Tokens still travel in `?token=` + `localStorage` today (IP-bound, 8 h, revoked on disconnect) — acceptable on a trusted home LAN, not on open Wi-Fi.
-- **Dependency upgrades**: `axum 0.7→0.8`, `rand 0.8→0.9` (breaking API changes, no security driver today).
-- **Per-IP data-plane token bucket** (e.g. `governor`): upgrade handshake is rate-limited; post-auth flood is currently bounded by the 5 ms input floor + 50-strike disconnect.
-- **PWA precache**: `sw.js` is network-first for navigations and does not precache hashed Vite assets — first offline load requires a prior online visit. `vite-plugin-pwa` would fix versioning.
-- **Async locks**: `std::sync::Mutex` is intentional (critical sections are short, never held across `.await`; see `AppState` docs). Migrate to `tokio::sync::Mutex` only if a future change needs to hold a lock across await.
-- **Live input stream**: the dashboard has no per-slot input feed by design (phones stream to the host, not to each other); the removed `LiveInputPreview` can return when such a feed exists.
+```powershell
+.\scripts\test.ps1   # tsc --noEmit · vitest · cargo test --locked --all-targets · clippy -D warnings · fmt --check
+```
+
+- **Rust** — 23 unit + 5 integration tests: protocol vectors, pairing (rate limits, rotation, revocation), watchdog timelines, sanitize/deadzone, origin allowlist, multi-slot pipeline.
+- **Web** — 6 vitest parity tests locking the binary layout against the Rust side.
+- **CI** (`.github/workflows/ci.yml`, Windows) runs every gate above plus a release build, uploading `pocketpad.exe` + `.sha256`. Dependabot watches Cargo and npm weekly. `Cargo.lock` is committed.
+
+---
+
+## ⚙️ Configuration
+
+| Setting | Where | Notes |
+|:---|:---|:---|
+| Bind port | `--port` / `POCKETPAD_PORT` (default `3000`) | Falls back to `port+1` when occupied |
+| Auto-open browser | `--no-browser` | Skip the dashboard pop-up |
+| Log level | `RUST_LOG` (`info` default, `debug` for auth traces) | `tracing` env filter |
+| Stick sensitivity / deadzone / invert / southpaw / haptics | Phone ⚙️ or dashboard Settings | Synced live, persisted to `localStorage` |
+| Control scale (0.8–1.2×) | Phone ⚙️ or dashboard Settings | Phone layout zoom for small screens |
+| Watchdog thresholds | Host constants (250 ms / 2 s) | Display-only in the dashboard by design |
+
+---
+
+## 🩺 Troubleshooting
+
+<details>
+<summary><b>Pairing code rejected / "too many attempts"</b></summary>
+
+Codes are 6 characters, letters + digits (no `0`/`O`/`1`/`I`/`L` to avoid mix-ups). After 5 wrong tries from one IP, wait 30 s. After 20 wrong tries LAN-wide the host rotates the code — read the fresh one off the host screen, not a photo of the old QR.
+
+</details>
+
+<details>
+<summary><b>Pairing popup keeps appearing / token rejected in a loop</b></summary>
+
+Clear the phone's stale credential once: dashboard Settings → **Data & Privacy → Clear All Pairings** (or clear the site's `localStorage`), then pair fresh with the current host code. If it persists, check the host log (`RUST_LOG=debug`) for `invalid token` vs `RateLimited` — the status code tells you whether to retype (`401`) or wait (`429`).
+
+</details>
+
+<details>
+<summary><b>Dashboard on another device shows no pairing code</b></summary>
+
+By design — codes and client IPs are disclosed only to `localhost`. Pair from the host screen.
+
+</details>
+
+<details>
+<summary><b>Port already in use</b></summary>
+
+The host automatically tries `port+1` and prints the actual URL + QR for that port. Or set `--port` / `POCKETPAD_PORT` explicitly.
+
+</details>
+
+<details>
+<summary><b>`cargo test` fails with `Access denied` on `target\debug\pocketpad.exe`</b></summary>
+
+A previous debug build is still running. `Stop-Process -Name pocketpad` and rerun.
+
+</details>
+
+<details>
+<summary><b>`joy.cpl` shows nothing / driver missing</b></summary>
+
+Install ViGEmBus (above) and reboot. The host prints `Driver Missing` with a help link and keeps serving the dashboard in diagnostic mode until the driver appears.
+
+</details>
+
+---
+
+## 🗂️ Project Layout
+
+```
+PocketPad
+├── host/                  # Rust Windows host (Axum + Tokio + ViGEmBus)
+│   ├── src/
+│   │   ├── server.rs      # HTTP + WebSocket + sessions + guards
+│   │   ├── pairing.rs     # Codes, rate limits, rotation, tokens
+│   │   ├── protocol.rs    # Binary frame codec + vectors
+│   │   ├── watchdog.rs    # 250 ms / 2 s failsafe
+│   │   ├── controller_state.rs  # XInput state + deadzone sanitize
+│   │   ├── virtual_controller.rs# ViGEmBus backend + mock
+│   │   ├── diagnostics.rs # Counters + per-slot telemetry
+│   │   └── network.rs     # LAN IP discovery + URL builders
+│   └── tests/             # End-to-end pipeline tests
+├── web/                   # Preact dashboard + phone controller (Vite)
+│   └── src/
+│       ├── controller/    # Phone gamepad (sticks, pads, triggers)
+│       ├── dashboard/     # Desktop Big-Picture-style UI
+│       ├── protocol/      # Zero-alloc binary encoder (+ parity tests)
+│       └── settings/
+├── scripts/               # build.ps1 · test.ps1 · run-dev.ps1
+└── .github/workflows/     # Windows CI + Dependabot
+```
+
+---
+
+## 🔮 Future Work
+
+Deliberately deferred — each needs a dependency, a protocol break, or a UX decision:
+
+- **TLS (`rustls`)** — `https`/`wss` for untrusted LANs. Fine on home Wi-Fi as-is; not for open networks.
+- **Dependency upgrades** — `axum 0.7→0.8`, `rand 0.8→0.9` (breaking APIs, no driver today).
+- **Per-IP data-plane token bucket** (e.g. `governor`) — handshake is rate-limited; post-auth floods are bounded by the 5 ms floor + 50-strike disconnect.
+- **PWA precache** — `sw.js` is network-first and skips hashed assets; first offline load needs a prior online visit. `vite-plugin-pwa` would fix versioning.
+- **Async locks** — `std::sync::Mutex` is intentional (short, never held across `.await`). Revisit only if a lock ever spans an await.
+- **Live input stream** — the dashboard shows session telemetry (packets/RTT/IP) rather than a fake live preview, by design.
 
 ---
 
 ## 🛡️ Safety & Failsafe Watchdog
 
-To prevent game characters from running in circles if a phone loses Wi-Fi signal or closes its browser:
-1. **250 ms Neutral Reset**: If no controller packet is received within 250 milliseconds, all buttons, triggers, and thumbsticks immediately reset to 0 (neutral).
-2. **2.0 s Session Drop**: If silence exceeds 2000 ms, the session is formally dropped and logged.
-3. **Clean Shutdown**: When PocketPad terminates (Ctrl+C), it sends a neutral state, unplugs the virtual device from Windows, and releases driver handles cleanly.
+If a phone loses Wi-Fi or closes its browser mid-game:
+
+1. **250 ms neutral reset** — buttons, triggers, and sticks snap to neutral.
+2. **2.0 s session drop** — the session is formally dropped and logged.
+3. **Clean shutdown** — Ctrl+C sends neutral state, unplugs the virtual device, and releases driver handles.
 
 ---
 
 ## 📄 License
 
-PocketPad is open source under the **MIT License**.
-See [LICENSE](LICENSE) for details.
+PocketPad is open source under the **MIT License**. See [LICENSE](LICENSE) for details.
+</div>
