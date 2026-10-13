@@ -140,6 +140,7 @@ export function ControllersPage({
                       className="btn-edit-icon"
                       onClick={() => (isEditing ? saveRename(slot.slotIndex) : startRename(slot.slotIndex))}
                       title="Rename device"
+                      aria-label={isEditing ? `Save name for ${displayName}` : `Rename ${displayName}`}
                     >
                       ✏️
                     </button>
@@ -218,6 +219,7 @@ export function ControllersPage({
                     className="card-menu-btn"
                     onClick={() => onDisconnectClient(slot.slotIndex)}
                     title="Disconnect this controller"
+                    aria-label={`Disconnect ${displayName}`}
                   >
                     •••
                   </button>

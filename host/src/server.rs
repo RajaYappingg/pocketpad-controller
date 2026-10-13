@@ -868,32 +868,25 @@ async fn handle_controller_socket(
 }
 
 fn cleanup_controller_slot(state: &AppState, slot_index: usize, session_id: u64) -> bool {
-    let revoked = {
-        let mut slot = state.controllers[slot_index].lock().unwrap_or_else(|e| {
-            warn!("Controller slot {slot_index} mutex poisoned; recovering");
-            e.into_inner()
-        });
-        if slot.session_id == Some(session_id) {
-            if let Err(error) = slot.controller.reset_neutral() {
-                warn!("Failed to reset controller slot {slot_index} during cleanup: {error}");
-            }
-            let revoked = slot.session_token.clone();
-            slot.session_id = None;
-            slot.client_ip = None;
-            slot.session_token = None;
-            Some(revoked)
-        } else {
-            None
+    // NOTE: the session token is deliberately NOT revoked here. A socket
+    // close (network drop, tab backgrounded, effect teardown) must not burn
+    // the phone's reconnect token — otherwise every transient drop forces a
+    // full code re-pair and the client loops on the pairing modal. Only an
+    // explicit host kick (api_disconnect) revokes tokens.
+    let mut slot = state.controllers[slot_index].lock().unwrap_or_else(|e| {
+        warn!("Controller slot {slot_index} mutex poisoned; recovering");
+        e.into_inner()
+    });
+    if slot.session_id == Some(session_id) {
+        if let Err(error) = slot.controller.reset_neutral() {
+            warn!("Failed to reset controller slot {slot_index} during cleanup: {error}");
         }
-    };
-    match revoked {
-        Some(maybe_token) => {
-            if let Some(token) = maybe_token {
-                state.pairing.invalidate(&token);
-            }
-            true
-        }
-        None => false,
+        slot.session_id = None;
+        slot.client_ip = None;
+        slot.session_token = None;
+        true
+    } else {
+        false
     }
 }
 

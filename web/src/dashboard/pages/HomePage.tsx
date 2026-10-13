@@ -156,6 +156,7 @@ export function HomePage({
                       className="card-menu-btn"
                       onClick={() => onDisconnectClient(slot.slotIndex)}
                       title="Disconnect session"
+                      aria-label={`Disconnect ${slot.slotIndex + 1}`}
                     >
                       •••
                     </button>
@@ -305,6 +306,7 @@ export function HomePage({
                     className="btn-copy-code"
                     onClick={copyCode}
                     title="Copy pairing code"
+                    aria-label="Copy pairing code"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />

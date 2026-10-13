@@ -65,6 +65,11 @@ export function App() {
   const rumbleIntervalRef = useRef<number | null>(null);
   const sessionTokenRef = useRef<string | null>(sessionToken);
   sessionTokenRef.current = sessionToken;
+  // Mirrors for the WS effect below, which intentionally does NOT depend on
+  // sessionToken/authError (receiving the token must not tear down the very
+  // socket that delivered it). Refs keep the guards fresh without re-runs.
+  const authErrorRef = useRef<string | null>(null);
+  authErrorRef.current = authError;
 
   const triggerRumble = (largeMotor: number, smallMotor: number) => {
     if (!settings.hapticsEnabled || !('vibrate' in navigator)) return;
@@ -237,7 +242,7 @@ export function App() {
       if (isDisposed) return;
       // Don't storm when the user must act (bad code/token): the effect
       // re-runs when they submit a new code via pairingCodeInput.
-      if (authError) return;
+      if (authErrorRef.current) return;
       attempt += 1;
       const capped = Math.min(2000 * 2 ** (attempt - 1), 10000);
       const jitter = Math.random() * 500;
@@ -381,7 +386,7 @@ export function App() {
             }
           }
 
-          if (!isDisposed && !authError) {
+          if (!isDisposed && !authErrorRef.current) {
             scheduleReconnect();
           }
         };
@@ -414,7 +419,12 @@ export function App() {
         wsRef.current = null;
       }
     };
-  }, [mode, pairingCodeInput, sessionToken, authError]);
+  // Effect deps are [mode, pairingCodeInput] ONLY. sessionToken and
+  // authError are ref-mirrored above: storing the freshly issued token (or
+  // setting an auth error) must not close and reopen the live socket, or the
+  // client reconnect-loops on the pairing modal (token minted → socket torn
+  // down → token rejected → modal flashes → repeat).
+  }, [mode, pairingCodeInput]);
 
   const handleDisconnectClient = async (slot?: number) => {
     try {
