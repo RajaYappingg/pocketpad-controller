@@ -37,6 +37,7 @@ export function App() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const pingIntervalRef = useRef<number | null>(null);
+  const sessionTokenRef = useRef<string | null>(null);
 
   const handleUpdateSettings = (newSettings: ControllerSettings) => {
     setSettings(newSettings);
@@ -112,8 +113,10 @@ export function App() {
     const connect = () => {
       if (isDisposed) return;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const code = pairingCodeInput || hostInfo.pairingCode;
-      const wsUrl = `${protocol}//${window.location.host}/ws?code=${encodeURIComponent(code)}`;
+      const authParam = sessionTokenRef.current
+        ? `token=${encodeURIComponent(sessionTokenRef.current)}`
+        : `code=${encodeURIComponent(pairingCodeInput || hostInfo.pairingCode)}`;
+      const wsUrl = `${protocol}//${window.location.host}/ws?${authParam}`;
 
       try {
         const ws = new WebSocket(wsUrl);
@@ -144,11 +147,15 @@ export function App() {
                 const sentTime = view.getUint32(3, true);
                 const rtt = Math.round(performance.now() - sentTime);
                 setPingMs(Math.max(0, rtt));
+                ws.send(JSON.stringify({ rttMs: Math.max(0, rtt) }));
               }
             }
           } else if (typeof event.data === 'string') {
             try {
               const msg = JSON.parse(event.data);
+              if (msg.token) {
+                sessionTokenRef.current = msg.token;
+              }
               if (msg.error) {
                 setAuthError(msg.error);
               }
@@ -187,6 +194,7 @@ export function App() {
         wsRef.current.close();
         wsRef.current = null;
       }
+      sessionTokenRef.current = null;
     };
   }, [mode, pairingCodeInput, hostInfo.pairingCode]);
 

@@ -109,11 +109,11 @@ fn test_pairing_workflow_and_token_reuse() {
 
     // Valid attempt returns reusable token
     let token = pairing.verify_code(client_ip, &code).unwrap();
-    assert!(pairing.verify_token(&token));
+    assert!(pairing.verify_token(&token, client_ip));
 
     // Token works even if code is regenerated
     let second_token = pairing.verify_code(client_ip, &code).unwrap();
-    assert!(pairing.verify_token(&second_token));
+    assert!(pairing.verify_token(&second_token, client_ip));
 }
 
 #[test]

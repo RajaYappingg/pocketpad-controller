@@ -72,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Pairing and Diagnostics
     let pairing = PairingManager::new();
+    let pairing_cleanup_handle = pairing.clone();
     let pairing_code = pairing.get_pairing_code();
     let diagnostics = Diagnostics::new();
     let (disconnect_tx, _) = broadcast::channel(16);
@@ -106,13 +107,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. Run Server with Graceful Shutdown on Ctrl+C
     let controllers_shutdown = Arc::clone(&controllers);
-    let server = axum::serve(listener, router.into_make_service());
+    let server = axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    );
+
+    let pairing_cleanup = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            pairing_cleanup_handle.cleanup();
+        }
+    });
 
     tokio::select! {
         res = server => {
             if let Err(e) = res {
                 error!("Server error: {e}");
             }
+            pairing_cleanup.abort();
         }
         _ = tokio::signal::ctrl_c() => {
             println!("\n  Shutdown signal received. Cleaning up virtual controller...");

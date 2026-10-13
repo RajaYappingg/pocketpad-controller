@@ -3,7 +3,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        ConnectInfo, Query, State,
     },
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -13,6 +13,7 @@ use axum::{
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -165,28 +166,33 @@ async fn api_disconnect(State(state): State<AppState>) -> impl IntoResponse {
 /// WebSocket connection upgrade and authentication
 async fn ws_handler(
     ws: WebSocketUpgrade,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
     Query(query): Query<WsAuthQuery>,
     State(state): State<AppState>,
 ) -> Response {
-    let remote_ip = "mobile_client";
+    let remote_ip = remote_addr.ip().to_string();
 
     // Verify pairing code or token
-    let is_authenticated = if let Some(ref token) = query.token {
-        state.pairing.verify_token(token)
+    let session_token = if let Some(ref token) = query.token {
+        if state.pairing.verify_token(token, &remote_ip) {
+            Some(token.clone())
+        } else {
+            None
+        }
     } else if let Some(ref code) = query.code {
-        state.pairing.verify_code(remote_ip, code).is_ok()
+        state.pairing.verify_code(&remote_ip, code).ok()
     } else {
-        false
+        None
     };
 
-    if !is_authenticated {
+    let Some(session_token) = session_token else {
         warn!("Rejected unauthenticated WebSocket connection attempt");
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "Invalid pairing code or expired token" })),
         )
             .into_response();
-    }
+    };
 
     let mut slots = state.controllers.lock().unwrap();
     let Some((slot_index, slot)) = slots
@@ -205,7 +211,14 @@ async fn ws_handler(
     drop(slots);
 
     ws.on_upgrade(move |socket| {
-        handle_controller_socket(socket, state, slot_index, session_id, "client".to_string())
+        handle_controller_socket(
+            socket,
+            state,
+            slot_index,
+            session_id,
+            remote_ip,
+            session_token,
+        )
     })
 }
 
@@ -216,6 +229,7 @@ async fn handle_controller_socket(
     slot_index: usize,
     session_id: u64,
     client_ip: String,
+    session_token: String,
 ) {
     info!("Phone controller connected from {client_ip}");
     state.diagnostics.set_client_connected(Some(client_ip.clone()));
@@ -226,6 +240,16 @@ async fn handle_controller_socket(
         if let Err(error) = slots[slot_index].controller.reset_neutral() {
             warn!("Failed to reset controller slot {slot_index} on connect: {error}");
         }
+    }
+    if socket
+        .send(Message::Text(
+            serde_json::json!({ "authenticated": true, "token": session_token }).to_string(),
+        ))
+        .await
+        .is_err()
+    {
+        cleanup_controller_slot(&state, slot_index, session_id);
+        return;
     }
 
     let watchdog = Arc::new(Mutex::new(Watchdog::new()));
@@ -275,6 +299,7 @@ async fn handle_controller_socket(
             }
         }
     });
+    let mut last_sequence = None;
 
     // Socket input loop
     loop {
@@ -295,6 +320,14 @@ async fn handle_controller_socket(
                         state.diagnostics.record_packet(bytes.len());
                         match Protocol::decode(&bytes) {
                             Ok(Packet::Input(input)) => {
+                                if let Some(previous) = last_sequence {
+                                    let delta = input.sequence.wrapping_sub(previous);
+                                    if delta == 0 || delta >= (1 << 31) {
+                                        state.diagnostics.record_malformed_packet();
+                                        continue;
+                                    }
+                                }
+                                last_sequence = Some(input.sequence);
                                 watchdog.lock().unwrap().on_input_received();
                                 let ctrl_state = ControllerState::from_raw_packet(&input);
                                 let mut slots = state.controllers.lock().unwrap();
@@ -317,6 +350,13 @@ async fn handle_controller_socket(
                             }
                         }
                     }
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(message) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if let Some(rtt_ms) = message.get("rttMs").and_then(|value| value.as_u64()) {
+                                state.diagnostics.record_rtt(rtt_ms.min(u32::MAX as u64) as u32);
+                            }
+                        }
+                    }
                     Some(Ok(Message::Close(_))) | None => {
                         info!("Controller WebSocket closed by client");
                         break;
@@ -336,15 +376,25 @@ async fn handle_controller_socket(
     let _ = watchdog_task.await;
 
     watchdog.lock().unwrap().on_session_end();
-    {
-        let mut slots = state.controllers.lock().unwrap();
-        if slots[slot_index].session_id == Some(session_id) {
-            if let Err(error) = slots[slot_index].controller.reset_neutral() {
-                warn!("Failed to reset controller slot {slot_index} during cleanup: {error}");
-            }
-            slots[slot_index].session_id = None;
-        }
+    cleanup_controller_slot(&state, slot_index, session_id);
+    let has_active_session = state
+        .controllers
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|slot| slot.session_id.is_some());
+    if !has_active_session {
+        state.diagnostics.set_client_connected(None);
     }
-    state.diagnostics.set_client_connected(None);
     info!("Controller session cleaned up cleanly");
+}
+
+fn cleanup_controller_slot(state: &AppState, slot_index: usize, session_id: u64) {
+    let mut slots = state.controllers.lock().unwrap();
+    if slots[slot_index].session_id == Some(session_id) {
+        if let Err(error) = slots[slot_index].controller.reset_neutral() {
+            warn!("Failed to reset controller slot {slot_index} during cleanup: {error}");
+        }
+        slots[slot_index].session_id = None;
+    }
 }

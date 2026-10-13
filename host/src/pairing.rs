@@ -13,11 +13,17 @@ pub struct PairingManager {
 #[derive(Debug)]
 struct PairingState {
     current_code: String,
-    session_tokens: HashMap<String, Instant>, // token -> created_at
+    session_tokens: HashMap<String, SessionToken>,
     failed_attempts: HashMap<String, (usize, Instant)>, // ip -> (count, window_start)
     max_failed_attempts: usize,
     attempt_window: Duration,
     token_ttl: Duration,
+}
+
+#[derive(Debug)]
+struct SessionToken {
+    created_at: Instant,
+    client_ip: String,
 }
 
 impl PairingManager {
@@ -60,7 +66,13 @@ impl PairingManager {
             // Success: clear failed attempts and generate session token
             state.failed_attempts.remove(ip);
             let token = format!("{:016x}{:016x}", rand::random::<u64>(), rand::random::<u64>());
-            state.session_tokens.insert(token.clone(), now);
+            state.session_tokens.insert(
+                token.clone(),
+                SessionToken {
+                    created_at: now,
+                    client_ip: ip.to_string(),
+                },
+            );
             Ok(token)
         } else {
             // Record failure
@@ -74,10 +86,11 @@ impl PairingManager {
     }
 
     /// Verifies an existing session token
-    pub fn verify_token(&self, token: &str) -> bool {
+    pub fn verify_token(&self, token: &str, ip: &str) -> bool {
         let state = self.inner.lock().unwrap();
-        if let Some(created) = state.session_tokens.get(token) {
-            Instant::now().duration_since(*created) < state.token_ttl
+        if let Some(session) = state.session_tokens.get(token) {
+            session.client_ip == ip
+                && Instant::now().duration_since(session.created_at) < state.token_ttl
         } else {
             false
         }
@@ -92,7 +105,7 @@ impl PairingManager {
 
         state
             .session_tokens
-            .retain(|_, created| now.duration_since(*created) < token_ttl);
+            .retain(|_, session| now.duration_since(session.created_at) < token_ttl);
         state
             .failed_attempts
             .retain(|_, (_, window_start)| now.duration_since(*window_start) < attempt_window);
@@ -111,7 +124,7 @@ mod tests {
 
         // Correct code succeeds and returns token
         let token = manager.verify_code(ip, &code).expect("Should succeed");
-        assert!(manager.verify_token(&token));
+        assert!(manager.verify_token(&token, ip));
 
         // Wrong code fails
         assert!(manager.verify_code(ip, "0000").is_err());

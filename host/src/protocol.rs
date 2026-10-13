@@ -29,6 +29,7 @@ pub enum Packet {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolError {
     TooShort { expected: usize, actual: usize },
+    UnexpectedLength { expected: usize, actual: usize },
     InvalidMagic(u8),
     UnsupportedVersion(u8),
     UnknownPacketType(u8),
@@ -39,6 +40,9 @@ impl std::fmt::Display for ProtocolError {
         match self {
             Self::TooShort { expected, actual } => {
                 write!(f, "Packet too short: expected {expected} bytes, got {actual}")
+            }
+            Self::UnexpectedLength { expected, actual } => {
+                write!(f, "Invalid packet length: expected {expected} bytes, got {actual}")
             }
             Self::InvalidMagic(m) => write!(f, "Invalid protocol magic: 0x{m:02x} (expected 0x50)"),
             Self::UnsupportedVersion(v) => {
@@ -82,6 +86,12 @@ impl Protocol {
                         actual: bytes.len(),
                     });
                 }
+                if bytes.len() != 19 {
+                    return Err(ProtocolError::UnexpectedLength {
+                        expected: 19,
+                        actual: bytes.len(),
+                    });
+                }
 
                 let sequence = u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]);
                 let buttons = u16::from_le_bytes([bytes[7], bytes[8]]);
@@ -110,12 +120,24 @@ impl Protocol {
                         actual: bytes.len(),
                     });
                 }
+                if bytes.len() != 7 {
+                    return Err(ProtocolError::UnexpectedLength {
+                        expected: 7,
+                        actual: bytes.len(),
+                    });
+                }
                 let timestamp = u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]);
                 Ok(Packet::Ping(timestamp))
             }
             PACKET_TYPE_PONG => {
                 if bytes.len() < 7 {
                     return Err(ProtocolError::TooShort {
+                        expected: 7,
+                        actual: bytes.len(),
+                    });
+                }
+                if bytes.len() != 7 {
+                    return Err(ProtocolError::UnexpectedLength {
                         expected: 7,
                         actual: bytes.len(),
                     });
@@ -228,6 +250,18 @@ mod tests {
         assert!(matches!(
             Protocol::decode(&bad_version),
             Err(ProtocolError::UnsupportedVersion(0x99))
+        ));
+    }
+
+    #[test]
+    fn test_reject_trailing_bytes() {
+        let mut input = [0u8; 20];
+        input[0] = PROTOCOL_MAGIC;
+        input[1] = PROTOCOL_VERSION;
+        input[2] = PACKET_TYPE_INPUT;
+        assert!(matches!(
+            Protocol::decode(&input),
+            Err(ProtocolError::UnexpectedLength { expected: 19, actual: 20 })
         ));
     }
 }

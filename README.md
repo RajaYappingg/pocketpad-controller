@@ -15,6 +15,7 @@ PocketPad transforms your Android phone into a genuine, hardware-level virtual X
 - **Hardware Multi-Touch**: Simultaneous dual analog sticks, triggers, face buttons, and bumpers using browser Pointer Capture.
 - **Four-Player Support**: Up to four phones can connect at once, each mapped to its own virtual Xbox 360 controller slot.
 - **Safety Watchdog (250 ms / 2.0 s)**: Automatic neutral state reset after 250 ms of stale input prevents stuck buttons or runaway axes.
+- **Session Security**: Pairing codes are rate-limited per client IP; authenticated clients receive short-lived IP-bound reconnect tokens.
 
 ---
 
@@ -86,6 +87,8 @@ PocketPad relies on the established, open-source [ViGEmBus driver](https://githu
 
 Each connected phone receives an independent virtual Xbox 360 controller. If all four slots are occupied, additional connections are rejected until a phone disconnects or the desktop dashboard uses **Disconnect Phone Session**.
 
+The pairing code is used for the initial connection. PocketPad then issues a session token to the browser, which is used for reconnects and expires after 24 hours. Tokens are bound to the client IP address.
+
 ### 4. Verifying with Windows `joy.cpl`
 
 1. Press `Win + R` on Windows.
@@ -116,6 +119,8 @@ This compiles:
 2. `host/` using Cargo with LTO and stripped symbols into `bin/pocketpad.exe`.
 
 The host binds its HTTP/WebSocket server to the local network so phones can connect. The embedded dashboard and controller UI are served from the same origin; cross-origin requests are not enabled by default.
+
+Input packets must have the exact documented length. Duplicate and out-of-order sequence numbers are discarded. The host periodically removes expired pairing tokens and records round-trip latency reported by connected clients in the dashboard diagnostics.
 
 ### Running Tests
 
