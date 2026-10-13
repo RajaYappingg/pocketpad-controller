@@ -18,6 +18,11 @@ export function App() {
   const [mode, setMode] = useState<'dashboard' | 'controller' | 'closed'>(() => {
     const params = new URLSearchParams(window.location.search);
     const modeParam = params.get('mode');
+    // '?mode=closed' is written by explicit logout (X button) so a reload
+    // can never auto-reconnect from a stale ?code= in history.
+    if (modeParam === 'closed') {
+      return 'closed';
+    }
     if (modeParam === 'controller' || (modeParam !== 'dashboard' && isMobileDevice)) {
       return 'controller';
     }
@@ -329,6 +334,9 @@ export function App() {
                 localStorage.setItem(TOKEN_KEY, msg.token);
                 setAuthError(null);
                 setShowPairingModal(false);
+                // Token is now the durable credential — drop ?code= from the
+                // URL so history/Referer/imitated-reloads can't resurrect it.
+                scrubAuthFromUrl(true);
               }
               if (typeof msg.slot === 'number') {
                 setPlayerSlot(msg.slot);
@@ -439,14 +447,48 @@ export function App() {
   };
 
   const closeTab = () => {
+    // window.close() only works for script-opened tabs; otherwise it silently
+    // no-ops, so only attempt it when there is an opener to return to.
+    if (window.opener) {
+      try {
+        window.close();
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  // Scrub auth material from the address bar without reloading. After logout
+  // this stops a reload (or Android back-button restore) from auto-connecting
+  // with a stale ?code=; after first pair it drops the code from history and
+  // Referer while the token in localStorage remains the durable credential.
+  const scrubAuthFromUrl = (paired: boolean) => {
     try {
-      window.close();
+      const url = paired ? `${window.location.pathname}?mode=controller` : `${window.location.pathname}?mode=closed`;
+      window.history.replaceState(null, '', url);
     } catch {
-      // ignore
+      // ignore (e.g. non-history contexts)
     }
   };
 
   const handleDisconnectFromPhone = () => {
+    // Explicit user logout: full local credential purge so NOTHING can
+    // auto-return to the controller — no token, no code, no ?code= in the URL.
+    // (Transient drops are different: they keep the token and reconnect
+    // silently without touching mode.) Server frees the slot on socket close;
+    // the dashboard kick endpoint remains the only remote revoker.
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(CODE_KEY);
+    } catch {
+      // ignore
+    }
+    sessionTokenRef.current = null;
+    setSessionToken(null);
+    setPairingCodeInput('');
+    setPairingInputDraft('');
+    setAuthError(null);
+    scrubAuthFromUrl(false);
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
