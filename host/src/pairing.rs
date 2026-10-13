@@ -112,6 +112,12 @@ impl PairingManager {
     }
 }
 
+impl Default for PairingManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

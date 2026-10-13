@@ -92,6 +92,10 @@ export function ControllerView({
     (e.currentTarget as HTMLElement).classList.remove('active');
   };
 
+  const dpadPointerId = useRef<number | null>(null);
+  const currentDpadMask = useRef<number>(0);
+  const dpadContainerRef = useRef<HTMLDivElement>(null);
+
   // Trigger handler (supports drag or tap)
   const handleTriggerDown = (e: PointerEvent, isRight: boolean) => {
     e.preventDefault();
@@ -101,30 +105,36 @@ export function ControllerView({
     el.classList.add('active');
     vibrate(16);
 
-    const updateTriggerValue = (clientY: number) => {
-      const rect = el.getBoundingClientRect();
-      let val = 255;
-      if (settings.triggerMode === 'analog') {
-        const fraction = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
-        // Dragging down increases trigger pressure
-        val = Math.round(fraction * 255);
-        if (val < 15) val = 255; // Default tap is 100%
-      }
+    const rect = el.getBoundingClientRect();
+    const startY = e.clientY;
+    let hasDragged = false;
+
+    const setTriggerValue = (val: number) => {
+      const clamped = Math.max(0, Math.min(255, val));
       if (isRight) {
-        stateRef.current.rightTrigger = val;
+        stateRef.current.rightTrigger = clamped;
       } else {
-        stateRef.current.leftTrigger = val;
+        stateRef.current.leftTrigger = clamped;
       }
       const meter = el.querySelector('.trigger-meter') as HTMLElement | null;
-      if (meter) meter.style.height = `${Math.round((val / 255) * 100)}%`;
+      if (meter) meter.style.height = `${Math.round((clamped / 255) * 100)}%`;
       isDirty.current = true;
     };
 
-    updateTriggerValue(e.clientY);
+    // Initial press: default to full 255
+    setTriggerValue(255);
 
     const onPointerMove = (me: PointerEvent) => {
       if (me.pointerId === e.pointerId) {
-        updateTriggerValue(me.clientY);
+        if (settings.triggerMode === 'analog') {
+          if (Math.abs(me.clientY - startY) > 6) {
+            hasDragged = true;
+          }
+          if (hasDragged) {
+            const fraction = Math.min(1, Math.max(0, (me.clientY - rect.top) / rect.height));
+            setTriggerValue(Math.round(fraction * 255));
+          }
+        }
       }
     };
 
@@ -135,20 +145,98 @@ export function ControllerView({
         el.removeEventListener('pointercancel', onPointerEnd);
         activePointers.current.delete(e.pointerId);
         el.classList.remove('active');
-        if (isRight) {
-          stateRef.current.rightTrigger = 0;
-        } else {
-          stateRef.current.leftTrigger = 0;
-        }
-        const meter = el.querySelector('.trigger-meter') as HTMLElement | null;
-        if (meter) meter.style.height = '0%';
-        isDirty.current = true;
+        setTriggerValue(0);
       }
     };
 
     el.addEventListener('pointermove', onPointerMove);
     el.addEventListener('pointerup', onPointerEnd);
     el.addEventListener('pointercancel', onPointerEnd);
+  };
+
+  // Unified D-Pad continuous gliding & 8-way diagonal calculation
+  const updateDpadState = (clientX: number, clientY: number, container: HTMLElement) => {
+    const rect = container.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = clientX - cx;
+    const dy = clientY - cy;
+    const dist = Math.hypot(dx, dy);
+
+    let mask = 0;
+    if (dist >= 14) {
+      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+      if (angle >= -22.5 && angle < 22.5) {
+        mask = XINPUT_BUTTONS.DPAD_RIGHT;
+      } else if (angle >= 22.5 && angle < 67.5) {
+        mask = XINPUT_BUTTONS.DPAD_DOWN | XINPUT_BUTTONS.DPAD_RIGHT;
+      } else if (angle >= 67.5 && angle < 112.5) {
+        mask = XINPUT_BUTTONS.DPAD_DOWN;
+      } else if (angle >= 112.5 && angle < 157.5) {
+        mask = XINPUT_BUTTONS.DPAD_DOWN | XINPUT_BUTTONS.DPAD_LEFT;
+      } else if (angle >= 157.5 || angle < -157.5) {
+        mask = XINPUT_BUTTONS.DPAD_LEFT;
+      } else if (angle >= -157.5 && angle < -112.5) {
+        mask = XINPUT_BUTTONS.DPAD_UP | XINPUT_BUTTONS.DPAD_LEFT;
+      } else if (angle >= -112.5 && angle < -67.5) {
+        mask = XINPUT_BUTTONS.DPAD_UP;
+      } else if (angle >= -67.5 && angle < -22.5) {
+        mask = XINPUT_BUTTONS.DPAD_UP | XINPUT_BUTTONS.DPAD_RIGHT;
+      }
+    }
+
+    const dpadAll =
+      XINPUT_BUTTONS.DPAD_UP |
+      XINPUT_BUTTONS.DPAD_DOWN |
+      XINPUT_BUTTONS.DPAD_LEFT |
+      XINPUT_BUTTONS.DPAD_RIGHT;
+
+    if (mask !== currentDpadMask.current) {
+      stateRef.current.buttons = (stateRef.current.buttons & ~dpadAll) | mask;
+      currentDpadMask.current = mask;
+      isDirty.current = true;
+      if (mask > 0) vibrate(12);
+
+      const up = container.querySelector('.dpad-up');
+      const down = container.querySelector('.dpad-down');
+      const left = container.querySelector('.dpad-left');
+      const right = container.querySelector('.dpad-right');
+
+      up?.classList.toggle('active', (mask & XINPUT_BUTTONS.DPAD_UP) !== 0);
+      down?.classList.toggle('active', (mask & XINPUT_BUTTONS.DPAD_DOWN) !== 0);
+      left?.classList.toggle('active', (mask & XINPUT_BUTTONS.DPAD_LEFT) !== 0);
+      right?.classList.toggle('active', (mask & XINPUT_BUTTONS.DPAD_RIGHT) !== 0);
+    }
+  };
+
+  const handleDpadDown = (e: PointerEvent) => {
+    e.preventDefault();
+    const container = e.currentTarget as HTMLElement;
+    dpadPointerId.current = e.pointerId;
+    container.setPointerCapture(e.pointerId);
+    updateDpadState(e.clientX, e.clientY, container);
+  };
+
+  const handleDpadMove = (e: PointerEvent) => {
+    if (e.pointerId !== dpadPointerId.current) return;
+    updateDpadState(e.clientX, e.clientY, e.currentTarget as HTMLElement);
+  };
+
+  const handleDpadEnd = (e: PointerEvent) => {
+    if (e.pointerId !== dpadPointerId.current) return;
+    const container = e.currentTarget as HTMLElement;
+    dpadPointerId.current = null;
+    const dpadAll =
+      XINPUT_BUTTONS.DPAD_UP |
+      XINPUT_BUTTONS.DPAD_DOWN |
+      XINPUT_BUTTONS.DPAD_LEFT |
+      XINPUT_BUTTONS.DPAD_RIGHT;
+
+    stateRef.current.buttons &= ~dpadAll;
+    currentDpadMask.current = 0;
+    isDirty.current = true;
+
+    container.querySelectorAll('.dpad-btn').forEach((b) => b.classList.remove('active'));
   };
 
   // Failsafe: reset all held buttons on window blur, visibility change, or connection drop
@@ -162,6 +250,8 @@ export function ControllerView({
       stateRef.current.thumbRX = 0;
       stateRef.current.thumbRY = 0;
       activePointers.current.clear();
+      currentDpadMask.current = 0;
+      dpadPointerId.current = null;
       isDirty.current = true;
       document.querySelectorAll('.active').forEach((el) => el.classList.remove('active'));
     };
@@ -170,6 +260,21 @@ export function ControllerView({
     };
     const handleLostPointerCapture = (event: Event) => {
       const pointerEvent = event as PointerEvent;
+      if (pointerEvent.pointerId === dpadPointerId.current) {
+        dpadPointerId.current = null;
+        currentDpadMask.current = 0;
+        const dpadAll =
+          XINPUT_BUTTONS.DPAD_UP |
+          XINPUT_BUTTONS.DPAD_DOWN |
+          XINPUT_BUTTONS.DPAD_LEFT |
+          XINPUT_BUTTONS.DPAD_RIGHT;
+        stateRef.current.buttons &= ~dpadAll;
+        isDirty.current = true;
+        dpadContainerRef.current
+          ?.querySelectorAll('.dpad-btn')
+          .forEach((b) => b.classList.remove('active'));
+        return;
+      }
       const control = activePointers.current.get(pointerEvent.pointerId);
       if (control === undefined) return;
       activePointers.current.delete(pointerEvent.pointerId);
@@ -306,6 +411,30 @@ export function ControllerView({
             >
               LB
             </button>
+            <button
+              className="btn-thumb-click"
+              onPointerDown={(e) =>
+                handleButtonDown(
+                  e,
+                  !settings.southpaw ? XINPUT_BUTTONS.LEFT_THUMB : XINPUT_BUTTONS.RIGHT_THUMB
+                )
+              }
+              onPointerUp={(e) =>
+                handleButtonUp(
+                  e,
+                  !settings.southpaw ? XINPUT_BUTTONS.LEFT_THUMB : XINPUT_BUTTONS.RIGHT_THUMB
+                )
+              }
+              onPointerCancel={(e) =>
+                handleButtonUp(
+                  e,
+                  !settings.southpaw ? XINPUT_BUTTONS.LEFT_THUMB : XINPUT_BUTTONS.RIGHT_THUMB
+                )
+              }
+              title="Left Stick Click (L3)"
+            >
+              {!settings.southpaw ? 'LS' : 'RS'}
+            </button>
           </div>
 
           {/* Left Analog Stick & D-Pad */}
@@ -331,40 +460,19 @@ export function ControllerView({
               />
             )}
 
-            {/* D-Pad Cross */}
-            <div className="dpad-container">
-              <button
-                className="dpad-btn dpad-up"
-                onPointerDown={(e) => handleButtonDown(e, XINPUT_BUTTONS.DPAD_UP)}
-                onPointerUp={(e) => handleButtonUp(e, XINPUT_BUTTONS.DPAD_UP)}
-                onPointerCancel={(e) => handleButtonUp(e, XINPUT_BUTTONS.DPAD_UP)}
-              >
-                ▲
-              </button>
-              <button
-                className="dpad-btn dpad-down"
-                onPointerDown={(e) => handleButtonDown(e, XINPUT_BUTTONS.DPAD_DOWN)}
-                onPointerUp={(e) => handleButtonUp(e, XINPUT_BUTTONS.DPAD_DOWN)}
-                onPointerCancel={(e) => handleButtonUp(e, XINPUT_BUTTONS.DPAD_DOWN)}
-              >
-                ▼
-              </button>
-              <button
-                className="dpad-btn dpad-left"
-                onPointerDown={(e) => handleButtonDown(e, XINPUT_BUTTONS.DPAD_LEFT)}
-                onPointerUp={(e) => handleButtonUp(e, XINPUT_BUTTONS.DPAD_LEFT)}
-                onPointerCancel={(e) => handleButtonUp(e, XINPUT_BUTTONS.DPAD_LEFT)}
-              >
-                ◀
-              </button>
-              <button
-                className="dpad-btn dpad-right"
-                onPointerDown={(e) => handleButtonDown(e, XINPUT_BUTTONS.DPAD_RIGHT)}
-                onPointerUp={(e) => handleButtonUp(e, XINPUT_BUTTONS.DPAD_RIGHT)}
-                onPointerCancel={(e) => handleButtonUp(e, XINPUT_BUTTONS.DPAD_RIGHT)}
-              >
-                ▶
-              </button>
+            {/* D-Pad Cross with Unified Gliding & Diagonal Touch */}
+            <div
+              ref={dpadContainerRef}
+              className="dpad-container"
+              onPointerDown={handleDpadDown}
+              onPointerMove={handleDpadMove}
+              onPointerUp={handleDpadEnd}
+              onPointerCancel={handleDpadEnd}
+            >
+              <div className="dpad-btn dpad-up">▲</div>
+              <div className="dpad-btn dpad-down">▼</div>
+              <div className="dpad-btn dpad-left">◀</div>
+              <div className="dpad-btn dpad-right">▶</div>
               <div className="dpad-center-hub" />
             </div>
           </div>
@@ -410,6 +518,30 @@ export function ControllerView({
         <div className="ctrl-wing" style={opacityStyle}>
           {/* Shoulder & Trigger */}
           <div className="shoulder-cluster">
+            <button
+              className="btn-thumb-click"
+              onPointerDown={(e) =>
+                handleButtonDown(
+                  e,
+                  !settings.southpaw ? XINPUT_BUTTONS.RIGHT_THUMB : XINPUT_BUTTONS.LEFT_THUMB
+                )
+              }
+              onPointerUp={(e) =>
+                handleButtonUp(
+                  e,
+                  !settings.southpaw ? XINPUT_BUTTONS.RIGHT_THUMB : XINPUT_BUTTONS.LEFT_THUMB
+                )
+              }
+              onPointerCancel={(e) =>
+                handleButtonUp(
+                  e,
+                  !settings.southpaw ? XINPUT_BUTTONS.RIGHT_THUMB : XINPUT_BUTTONS.LEFT_THUMB
+                )
+              }
+              title="Right Stick Click (R3)"
+            >
+              {!settings.southpaw ? 'RS' : 'LS'}
+            </button>
             <button
               className="btn-shoulder"
               onPointerDown={(e) => handleButtonDown(e, XINPUT_BUTTONS.RIGHT_SHOULDER)}

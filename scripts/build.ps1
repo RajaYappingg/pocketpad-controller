@@ -54,6 +54,13 @@ if (-not (Test-Path $BinDir)) {
 $SourceExe = Join-Path $RootDir "target\release\pocketpad.exe"
 $DestExe = Join-Path $BinDir "pocketpad.exe"
 
+$running = Get-Process -Name pocketpad -ErrorAction SilentlyContinue
+if ($running) {
+    Write-Host "Stopping running pocketpad process to update binary..." -ForegroundColor Yellow
+    Stop-Process -Name pocketpad -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 300
+}
+
 Copy-Item -Path $SourceExe -Destination $DestExe -Force
 $ExeSize = (Get-Item $DestExe).Length / 1MB
 

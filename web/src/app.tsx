@@ -5,9 +5,20 @@ import { BinaryProtocolEncoder, PACKET_TYPE } from './protocol/binary_protocol';
 import { DashboardView } from './dashboard/DashboardView';
 import { ControllerView } from './controller/ControllerView';
 
+const TOKEN_KEY = 'pocketpad_session_token';
+const CODE_KEY = 'pocketpad_pairing_code';
+
 export function App() {
   const [mode, setMode] = useState<'dashboard' | 'controller'>('dashboard');
-  const [pairingCodeInput, setPairingCodeInput] = useState('');
+  const [pairingCodeInput, setPairingCodeInput] = useState<string>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('code') || localStorage.getItem(CODE_KEY) || '';
+  });
+  const [sessionToken, setSessionToken] = useState<string | null>(() => {
+    return localStorage.getItem(TOKEN_KEY);
+  });
+  const [showPairingModal, setShowPairingModal] = useState(false);
+  const [pairingInputDraft, setPairingInputDraft] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [pingMs, setPingMs] = useState<number>(-1);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -16,7 +27,7 @@ export function App() {
     status: 'ok',
     driverInstalled: true,
     driverName: 'ViGEmBus (Xbox 360)',
-    pairingCode: '1234',
+    pairingCode: '',
     serverUrl: window.location.origin,
     ipAddresses: ['127.0.0.1'],
     port: window.location.port ? parseInt(window.location.port) : 80,
@@ -37,7 +48,8 @@ export function App() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const pingIntervalRef = useRef<number | null>(null);
-  const sessionTokenRef = useRef<string | null>(null);
+  const sessionTokenRef = useRef<string | null>(sessionToken);
+  sessionTokenRef.current = sessionToken;
 
   const handleUpdateSettings = (newSettings: ControllerSettings) => {
     setSettings(newSettings);
@@ -56,6 +68,7 @@ export function App() {
 
     if (codeParam) {
       setPairingCodeInput(codeParam);
+      localStorage.setItem(CODE_KEY, codeParam);
     }
 
     const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -97,6 +110,40 @@ export function App() {
     };
   }, []);
 
+  // Screen Wake Lock API to prevent phone screen from turning off during play
+  useEffect(() => {
+    if (mode !== 'controller' || !isConnected) return;
+    let wakeLock: any = null;
+
+    const acquireLock = async () => {
+      if ('wakeLock' in navigator && (navigator as any).wakeLock) {
+        try {
+          wakeLock = await (navigator as any).wakeLock.request('screen');
+        } catch {
+          // May fail if low battery mode or backgrounded
+        }
+      }
+    };
+
+    acquireLock();
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        acquireLock();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+        wakeLock = null;
+      }
+    };
+  }, [mode, isConnected]);
+
   // Connect WebSocket when in controller mode
   useEffect(() => {
     if (mode !== 'controller') {
@@ -107,15 +154,32 @@ export function App() {
       return;
     }
 
+    // If no credentials yet, prompt user with pairing modal instead of failing
+    const currentToken = sessionTokenRef.current;
+    const currentCode = pairingCodeInput.trim();
+
+    if (!currentToken && !currentCode) {
+      setShowPairingModal(true);
+      return;
+    }
+
     let reconnectTimer: number;
     let isDisposed = false;
 
     const connect = () => {
       if (isDisposed) return;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const authParam = sessionTokenRef.current
-        ? `token=${encodeURIComponent(sessionTokenRef.current)}`
-        : `code=${encodeURIComponent(pairingCodeInput || hostInfo.pairingCode)}`;
+      const tokenToUse = sessionTokenRef.current;
+      const codeToUse = pairingCodeInput.trim();
+
+      if (!tokenToUse && !codeToUse) {
+        setShowPairingModal(true);
+        return;
+      }
+
+      const authParam = tokenToUse
+        ? `token=${encodeURIComponent(tokenToUse)}`
+        : `code=${encodeURIComponent(codeToUse)}`;
       const wsUrl = `${protocol}//${window.location.host}/ws?${authParam}`;
 
       try {
@@ -126,6 +190,7 @@ export function App() {
         ws.onopen = () => {
           setIsConnected(true);
           setAuthError(null);
+          setShowPairingModal(false);
 
           // Start ping/pong for RTT latency
           if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
@@ -155,9 +220,18 @@ export function App() {
               const msg = JSON.parse(event.data);
               if (msg.token) {
                 sessionTokenRef.current = msg.token;
+                setSessionToken(msg.token);
+                localStorage.setItem(TOKEN_KEY, msg.token);
+                setAuthError(null);
+                setShowPairingModal(false);
               }
               if (msg.error) {
                 setAuthError(msg.error);
+                // Purge invalid token and request code
+                sessionTokenRef.current = null;
+                setSessionToken(null);
+                localStorage.removeItem(TOKEN_KEY);
+                setShowPairingModal(true);
               }
             } catch {
               // ignore
@@ -169,8 +243,8 @@ export function App() {
           setIsConnected(false);
           setPingMs(-1);
           if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
-          if (!isDisposed) {
-            reconnectTimer = window.setTimeout(connect, 1500);
+          if (!isDisposed && !authError) {
+            reconnectTimer = window.setTimeout(connect, 2000);
           }
         };
 
@@ -178,8 +252,8 @@ export function App() {
           ws.close();
         };
       } catch (err) {
-        if (!isDisposed) {
-          reconnectTimer = window.setTimeout(connect, 1500);
+        if (!isDisposed && !authError) {
+          reconnectTimer = window.setTimeout(connect, 2000);
         }
       }
     };
@@ -194,9 +268,8 @@ export function App() {
         wsRef.current.close();
         wsRef.current = null;
       }
-      sessionTokenRef.current = null;
     };
-  }, [mode, pairingCodeInput, hostInfo.pairingCode]);
+  }, [mode, pairingCodeInput, sessionToken, authError]);
 
   const handleDisconnectClient = async () => {
     try {
@@ -213,28 +286,99 @@ export function App() {
     setMode('dashboard');
   };
 
+  const handlePairingSubmit = (code: string) => {
+    const clean = code.trim();
+    if (clean.length === 4) {
+      setPairingCodeInput(clean);
+      localStorage.setItem(CODE_KEY, clean);
+      setSessionToken(null);
+      sessionTokenRef.current = null;
+      localStorage.removeItem(TOKEN_KEY);
+      setAuthError(null);
+      setShowPairingModal(false);
+    }
+  };
+
   if (mode === 'controller') {
     return (
       <div style={{ width: '100%', height: '100%' }}>
-        {authError && (
-          <div
-            style={{
-              position: 'fixed',
-              top: '50px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: 'rgba(239, 68, 68, 0.95)',
-              color: '#fff',
-              padding: '8px 16px',
-              borderRadius: '8px',
-              zIndex: 300,
-              fontSize: '13px',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-            }}
-          >
-            {authError}
+        {showPairingModal && (
+          <div className="pairing-modal-overlay">
+            <div className="pairing-modal-card">
+              <div style={{ fontSize: '32px' }}>📱</div>
+              <div>
+                <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#ffffff' }}>
+                  Pair PocketPad Gamepad
+                </h2>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  Enter the 4-digit pairing code shown on your Windows desktop screen:
+                </p>
+              </div>
+
+              {authError && (
+                <div
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.15)',
+                    border: '1px solid rgba(239, 68, 68, 0.35)',
+                    color: 'var(--accent-red)',
+                    fontSize: '12px',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    fontWeight: 600,
+                  }}
+                >
+                  {authError}
+                </div>
+              )}
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handlePairingSubmit(pairingInputDraft);
+                }}
+                style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}
+              >
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={4}
+                  placeholder="••••"
+                  value={pairingInputDraft}
+                  onInput={(e) => {
+                    const val = (e.target as HTMLInputElement).value
+                      .replace(/\D/g, '')
+                      .slice(0, 4);
+                    setPairingInputDraft(val);
+                    if (val.length === 4) {
+                      handlePairingSubmit(val);
+                    }
+                  }}
+                  autoFocus
+                  className="pairing-input-field"
+                />
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  style={{ width: '100%', padding: '12px', fontSize: '14px', fontWeight: 700 }}
+                  disabled={pairingInputDraft.trim().length !== 4}
+                >
+                  Connect Controller
+                </button>
+              </form>
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ fontSize: '12px' }}
+                onClick={() => setMode('dashboard')}
+              >
+                View Desktop Dashboard
+              </button>
+            </div>
           </div>
         )}
+
         <ControllerView
           ws={wsRef.current}
           isConnected={isConnected}

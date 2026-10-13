@@ -455,7 +455,7 @@ html, body {
   width: 100%;
 }
 
-.btn-shoulder, .btn-trigger {
+.btn-shoulder, .btn-trigger, .btn-thumb-click {
   flex: 1;
   background: var(--bg-control);
   border: 1px solid var(--border-control);
@@ -472,6 +472,12 @@ html, body {
   overflow: hidden;
 }
 
+.btn-thumb-click {
+  font-size: 11px;
+  color: var(--text-muted);
+  border-style: dashed;
+}
+
 .btn-trigger .trigger-meter {
   position: absolute;
   bottom: 0;
@@ -485,7 +491,8 @@ html, body {
 }
 
 .btn-shoulder:active, .btn-shoulder.active,
-.btn-trigger:active, .btn-trigger.active {
+.btn-trigger:active, .btn-trigger.active,
+.btn-thumb-click:active, .btn-thumb-click.active {
   background: var(--bg-control-active);
   border-color: var(--accent-red);
   color: #ffffff;
@@ -551,6 +558,7 @@ html, body {
   height: 140px;
   position: relative;
   touch-action: none;
+  cursor: pointer;
 }
 
 .dpad-btn {
@@ -563,6 +571,8 @@ html, body {
   justify-content: center;
   font-size: 14px;
   font-weight: 700;
+  pointer-events: none;
+  transition: background 0.05s, color 0.05s, border-color 0.05s;
 }
 
 .dpad-btn:active, .dpad-btn.active {
@@ -801,4 +811,51 @@ html, body {
   width: 18px;
   height: 18px;
   accent-color: var(--accent-red);
+}
+
+/* Mobile Pairing Code Modal */
+.pairing-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  padding: 16px;
+}
+
+.pairing-modal-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-control);
+  border-radius: 12px;
+  padding: 24px;
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.7);
+  text-align: center;
+}
+
+.pairing-input-field {
+  background: var(--bg-control);
+  border: 2px solid var(--border-control);
+  border-radius: 8px;
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  text-align: center;
+  padding: 10px 12px;
+  width: 100%;
+  outline: none;
+}
+
+.pairing-input-field:focus {
+  border-color: var(--accent-red);
+  box-shadow: 0 0 12px var(--accent-red-glow);
 }

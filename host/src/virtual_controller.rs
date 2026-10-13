@@ -145,6 +145,12 @@ impl MockVirtualController {
     }
 }
 
+impl Default for MockVirtualController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VirtualController for MockVirtualController {
     fn update(&mut self, state: &ControllerState) -> Result<(), ControllerError> {
         if !self.is_plugged_in {
