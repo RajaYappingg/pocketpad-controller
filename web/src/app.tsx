@@ -21,6 +21,8 @@ export function App() {
     ipAddresses: ['127.0.0.1'],
     port: window.location.port ? parseInt(window.location.port) : 80,
     activeClientConnected: false,
+    activeClients: 0,
+    controllerSlots: 4,
     packetsReceived: 0,
   });
 

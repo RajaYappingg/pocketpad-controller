@@ -525,7 +525,7 @@ html, body {
   border: 2px solid #40444f;
   border-radius: 50%;
   position: absolute;
-  pointer-events: none;
+  pointer-events: auto;
   display: flex;
   align-items: center;
   justify-content: center;

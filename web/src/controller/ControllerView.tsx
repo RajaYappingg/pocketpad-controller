@@ -165,16 +165,32 @@ export function ControllerView({
       isDirty.current = true;
       document.querySelectorAll('.active').forEach((el) => el.classList.remove('active'));
     };
-
-    window.addEventListener('blur', resetAll);
-    document.addEventListener('visibilitychange', () => {
+    const handleVisibilityChange = () => {
       if (document.hidden) resetAll();
-    });
+    };
+    const handleLostPointerCapture = (event: Event) => {
+      const pointerEvent = event as PointerEvent;
+      const control = activePointers.current.get(pointerEvent.pointerId);
+      if (control === undefined) return;
+      activePointers.current.delete(pointerEvent.pointerId);
+      if (control === 998) stateRef.current.leftTrigger = 0;
+      else if (control === 999) stateRef.current.rightTrigger = 0;
+      else stateRef.current.buttons &= ~control;
+      isDirty.current = true;
+      (pointerEvent.target as HTMLElement | null)?.classList.remove('active');
+    };
+
+    if (!isConnected) resetAll();
+    window.addEventListener('blur', resetAll);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('lostpointercapture', handleLostPointerCapture);
 
     return () => {
       window.removeEventListener('blur', resetAll);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('lostpointercapture', handleLostPointerCapture);
     };
-  }, []);
+  }, [isConnected]);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {

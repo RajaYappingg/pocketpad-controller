@@ -13,6 +13,7 @@ PocketPad transforms your Android phone into a genuine, hardware-level virtual X
 - **Ultra-Low Latency (~2-6 ms Wi-Fi RTT)**: Zero heap allocations in the input loop. Fixed 19-byte binary WebSocket packet stream at 60–120Hz.
 - **Single Self-Contained Binary**: The Rust Windows host embeds all HTML, CSS, and Preact assets. No Node.js, Python, Java, or Electron runtime required to run.
 - **Hardware Multi-Touch**: Simultaneous dual analog sticks, triggers, face buttons, and bumpers using browser Pointer Capture.
+- **Four-Player Support**: Up to four phones can connect at once, each mapped to its own virtual Xbox 360 controller slot.
 - **Safety Watchdog (250 ms / 2.0 s)**: Automatic neutral state reset after 250 ms of stale input prevents stuck buttons or runaway axes.
 
 ---
@@ -28,6 +29,7 @@ Android Phone (Chrome)
 Windows PC (PocketPad Host)
     ├── Axum WebSocket Server (Tokio async)
     ├── Watchdog Failsafe (250 ms neutral reset)
+    ├── Four Independent Controller Sessions
     ├── VirtualController Trait Abstraction
     └── ViGEmBus Kernel Driver
             │  (XInput)
@@ -80,7 +82,9 @@ PocketPad relies on the established, open-source [ViGEmBus driver](https://githu
 2. The local dashboard opens in your browser (`http://localhost:3000/?mode=dashboard`).
 3. Scan the displayed **QR Code** using your phone camera or enter the local IP URL.
 4. Enter the 4-digit pairing code shown on your desktop screen.
-5. Your phone becomes an instant landscape controller!
+5. Your phone becomes an instant landscape controller! Repeat the pairing URL on up to four phones for local multiplayer.
+
+Each connected phone receives an independent virtual Xbox 360 controller. If all four slots are occupied, additional connections are rejected until a phone disconnects or the desktop dashboard uses **Disconnect Phone Session**.
 
 ### 4. Verifying with Windows `joy.cpl`
 
@@ -99,6 +103,7 @@ PocketPad builds with **PNPM** for the web client and **Cargo** for the Windows 
 
 - Node.js 18+ and PNPM (`corepack enable` or `npm i -g pnpm`)
 - Rust Stable (`rustup-init.exe`)
+- ViGEmBus installed for up to four virtual Xbox 360 controller targets
 
 ### One-Command Build Script
 
@@ -109,6 +114,8 @@ PocketPad builds with **PNPM** for the web client and **Cargo** for the Windows 
 This compiles:
 1. `web/` using Vite + TypeScript + Preact into `web/dist`.
 2. `host/` using Cargo with LTO and stripped symbols into `bin/pocketpad.exe`.
+
+The host binds its HTTP/WebSocket server to the local network so phones can connect. The embedded dashboard and controller UI are served from the same origin; cross-origin requests are not enabled by default.
 
 ### Running Tests
 

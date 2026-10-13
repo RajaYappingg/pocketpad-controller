@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 
 use crate::controller_state::ControllerState;
@@ -32,12 +31,17 @@ struct WebAssets;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub controller: Arc<Mutex<Box<dyn VirtualController>>>,
+    pub controllers: Arc<Mutex<Vec<ControllerSlot>>>,
     pub driver_status: DriverStatus,
     pub pairing: PairingManager,
     pub diagnostics: Diagnostics,
     pub port: u16,
     pub disconnect_notify: Arc<broadcast::Sender<()>>,
+}
+
+pub struct ControllerSlot {
+    pub controller: Box<dyn VirtualController>,
+    pub session_id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,6 +64,8 @@ pub struct StatusResponse {
     pub port: u16,
     pub active_client_connected: bool,
     pub active_client_ip: Option<String>,
+    pub active_clients: usize,
+    pub controller_slots: usize,
     pub packets_received: u64,
     pub rtt_ms: Option<u32>,
     pub uptime_secs: u64,
@@ -71,7 +77,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/disconnect", post(api_disconnect))
         .route("/ws", get(ws_handler))
         .fallback(static_file_handler)
-        .layer(CorsLayer::permissive())
         .with_state(state)
 }
 
@@ -106,6 +111,10 @@ async fn static_file_handler(uri: axum::http::Uri) -> impl IntoResponse {
 /// Status API for desktop dashboard
 async fn api_status(State(state): State<AppState>) -> Json<StatusResponse> {
     let snap = state.diagnostics.snapshot();
+    let slots = state.controllers.lock().unwrap();
+    let active_clients = slots.iter().filter(|slot| slot.session_id.is_some()).count();
+    let controller_slots = slots.len();
+    drop(slots);
     let code = state.pairing.get_pairing_code();
     let local_ip = NetworkUtils::get_primary_local_ip().to_string();
     let server_url = format!("http://{local_ip}:{}", state.port);
@@ -130,6 +139,8 @@ async fn api_status(State(state): State<AppState>) -> Json<StatusResponse> {
         port: state.port,
         active_client_connected: snap.active_client_connected,
         active_client_ip: snap.active_client_ip,
+        active_clients,
+        controller_slots,
         packets_received: snap.packets_received,
         rtt_ms: snap.current_rtt_ms,
         uptime_secs: snap.uptime_secs,
@@ -139,10 +150,15 @@ async fn api_status(State(state): State<AppState>) -> Json<StatusResponse> {
 /// Safe disconnect endpoint from dashboard
 async fn api_disconnect(State(state): State<AppState>) -> impl IntoResponse {
     let _ = state.disconnect_notify.send(());
-    let mut ctrl = state.controller.lock().unwrap();
-    let _ = ctrl.reset_neutral();
+    let mut slots = state.controllers.lock().unwrap();
+    for slot in slots.iter_mut() {
+        if let Err(error) = slot.controller.reset_neutral() {
+            warn!("Failed to reset controller during dashboard disconnect: {error}");
+        }
+        slot.session_id = None;
+    }
     state.diagnostics.set_client_connected(None);
-    info!("Phone session disconnected via dashboard API");
+    info!("All phone sessions disconnected via dashboard API");
     StatusCode::OK
 }
 
@@ -172,18 +188,44 @@ async fn ws_handler(
             .into_response();
     }
 
-    ws.on_upgrade(move |socket| handle_controller_socket(socket, state, "client".to_string()))
+    let mut slots = state.controllers.lock().unwrap();
+    let Some((slot_index, slot)) = slots
+        .iter_mut()
+        .enumerate()
+        .find(|(_, slot)| slot.session_id.is_none())
+    else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "All four controller slots are in use" })),
+        )
+            .into_response();
+    };
+    let session_id = rand::random::<u64>();
+    slot.session_id = Some(session_id);
+    drop(slots);
+
+    ws.on_upgrade(move |socket| {
+        handle_controller_socket(socket, state, slot_index, session_id, "client".to_string())
+    })
 }
 
 /// High-performance controller socket loop
-async fn handle_controller_socket(mut socket: WebSocket, state: AppState, client_ip: String) {
+async fn handle_controller_socket(
+    mut socket: WebSocket,
+    state: AppState,
+    slot_index: usize,
+    session_id: u64,
+    client_ip: String,
+) {
     info!("Phone controller connected from {client_ip}");
     state.diagnostics.set_client_connected(Some(client_ip.clone()));
 
     // Reset controller to neutral on connect
     {
-        let mut ctrl = state.controller.lock().unwrap();
-        let _ = ctrl.reset_neutral();
+        let mut slots = state.controllers.lock().unwrap();
+        if let Err(error) = slots[slot_index].controller.reset_neutral() {
+            warn!("Failed to reset controller slot {slot_index} on connect: {error}");
+        }
     }
 
     let watchdog = Arc::new(Mutex::new(Watchdog::new()));
@@ -193,9 +235,10 @@ async fn handle_controller_socket(mut socket: WebSocket, state: AppState, client
 
     // Background watchdog task (ticks every 25ms to detect staleness within 250ms)
     let watchdog_clone = Arc::clone(&watchdog);
-    let controller_clone = Arc::clone(&state.controller);
+    let controllers_clone = Arc::clone(&state.controllers);
     let diag_clone = state.diagnostics.clone();
     let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let (drop_tx, mut drop_rx) = tokio::sync::oneshot::channel::<()>();
 
     let watchdog_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(25));
@@ -208,14 +251,19 @@ async fn handle_controller_socket(mut socket: WebSocket, state: AppState, client
                     };
                     match action {
                         WatchdogAction::ResetNeutral => {
-                            let mut ctrl = controller_clone.lock().unwrap();
-                            let _ = ctrl.reset_neutral();
+                            let mut slots = controllers_clone.lock().unwrap();
+                            if let Err(error) = slots[slot_index].controller.reset_neutral() {
+                                warn!("Failed to reset stale controller slot {slot_index}: {error}");
+                            }
                             diag_clone.record_stale_reset();
                         }
                         WatchdogAction::DropSession => {
                             warn!("Watchdog: connection timed out, dropping session");
-                            let mut ctrl = controller_clone.lock().unwrap();
-                            let _ = ctrl.reset_neutral();
+                            let mut slots = controllers_clone.lock().unwrap();
+                            if let Err(error) = slots[slot_index].controller.reset_neutral() {
+                                warn!("Failed to reset timed-out controller slot {slot_index}: {error}");
+                            }
+                            let _ = drop_tx.send(());
                             break;
                         }
                         WatchdogAction::None => {}
@@ -231,6 +279,10 @@ async fn handle_controller_socket(mut socket: WebSocket, state: AppState, client
     // Socket input loop
     loop {
         tokio::select! {
+            _ = &mut drop_rx => {
+                let _ = socket.close().await;
+                break;
+            }
             _ = disconnect_rx.recv() => {
                 info!("Session disconnected via remote signal");
                 let _ = socket.send(Message::Text("{\"disconnected\":true}".to_string())).await;
@@ -245,8 +297,11 @@ async fn handle_controller_socket(mut socket: WebSocket, state: AppState, client
                             Ok(Packet::Input(input)) => {
                                 watchdog.lock().unwrap().on_input_received();
                                 let ctrl_state = ControllerState::from_raw_packet(&input);
-                                let mut ctrl = state.controller.lock().unwrap();
-                                if let Err(e) = ctrl.update(&ctrl_state) {
+                                let mut slots = state.controllers.lock().unwrap();
+                                if slots[slot_index].session_id != Some(session_id) {
+                                    break;
+                                }
+                                if let Err(e) = slots[slot_index].controller.update(&ctrl_state) {
                                     error!("Virtual controller update failed: {e}");
                                 }
                             }
@@ -282,8 +337,13 @@ async fn handle_controller_socket(mut socket: WebSocket, state: AppState, client
 
     watchdog.lock().unwrap().on_session_end();
     {
-        let mut ctrl = state.controller.lock().unwrap();
-        let _ = ctrl.reset_neutral();
+        let mut slots = state.controllers.lock().unwrap();
+        if slots[slot_index].session_id == Some(session_id) {
+            if let Err(error) = slots[slot_index].controller.reset_neutral() {
+                warn!("Failed to reset controller slot {slot_index} during cleanup: {error}");
+            }
+            slots[slot_index].session_id = None;
+        }
     }
     state.diagnostics.set_client_connected(None);
     info!("Controller session cleaned up cleanly");

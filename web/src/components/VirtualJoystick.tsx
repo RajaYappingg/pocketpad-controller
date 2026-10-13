@@ -24,6 +24,8 @@ export function VirtualJoystick({
   const thumbRef = useRef<HTMLDivElement>(null);
   const activePointerId = useRef<number | null>(null);
   const centerPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const startedOnThumb = useRef(false);
+  const moved = useRef(false);
 
   // Store options in refs so pointer listeners always see current props without re-binding
   const optsRef = useRef({ deadzone, sensitivity, invertY, onMove, onClick });
@@ -39,6 +41,8 @@ export function VirtualJoystick({
     const handlePointerDown = (e: PointerEvent) => {
       if (activePointerId.current !== null) return;
       activePointerId.current = e.pointerId;
+      startedOnThumb.current = e.target instanceof Node && thumb.contains(e.target);
+      moved.current = false;
       el.setPointerCapture(e.pointerId);
 
       const rect = el.getBoundingClientRect();
@@ -55,17 +59,24 @@ export function VirtualJoystick({
       updateStick(e.clientX, e.clientY);
     };
 
-    const resetStick = () => {
+    const resetStick = (wasClick = false) => {
       activePointerId.current = null;
       if (thumb) {
         thumb.style.transform = 'translate3d(0px, 0px, 0px)';
       }
       optsRef.current.onMove(0, 0);
+      if (wasClick && startedOnThumb.current && !moved.current) {
+        optsRef.current.onClick(true);
+        optsRef.current.onClick(false);
+        el.classList.add('clicked');
+        window.setTimeout(() => el.classList.remove('clicked'), 120);
+      }
+      startedOnThumb.current = false;
     };
 
     const handlePointerUp = (e: PointerEvent) => {
       if (e.pointerId !== activePointerId.current) return;
-      resetStick();
+      resetStick(true);
     };
 
     const handlePointerCancel = (e: PointerEvent) => {
@@ -77,6 +88,7 @@ export function VirtualJoystick({
       const dx = clientX - centerPos.current.x;
       const dy = clientY - centerPos.current.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 8) moved.current = true;
 
       // Visual clamping to circular boundary
       const clampedDist = Math.min(dist, maxRadius);
@@ -128,19 +140,6 @@ export function VirtualJoystick({
     };
   }, [size]);
 
-  // Click handler for stick-click (LS or RS)
-  const handleThumbClickDown = (e: MouseEvent | TouchEvent) => {
-    e.stopPropagation();
-    optsRef.current.onClick(true);
-    if (containerRef.current) containerRef.current.classList.add('clicked');
-  };
-
-  const handleThumbClickUp = (e: MouseEvent | TouchEvent) => {
-    e.stopPropagation();
-    optsRef.current.onClick(false);
-    if (containerRef.current) containerRef.current.classList.remove('clicked');
-  };
-
   return (
     <div
       ref={containerRef}
@@ -150,10 +149,6 @@ export function VirtualJoystick({
       <div
         ref={thumbRef}
         className="joystick-thumb"
-        onMouseDown={handleThumbClickDown}
-        onMouseUp={handleThumbClickUp}
-        onTouchStart={handleThumbClickDown}
-        onTouchEnd={handleThumbClickUp}
       >
         <span className="thumb-click-label">{label}</span>
       </div>

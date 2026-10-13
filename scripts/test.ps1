@@ -23,6 +23,9 @@ Write-Host "`n[1/2] Verifying Frontend TypeScript and Bundle..." -ForegroundColo
 Push-Location $WebDir
 try {
     pnpm run build
+    if ($LASTEXITCODE -ne 0) {
+        throw "Frontend verification failed with exit code $LASTEXITCODE."
+    }
 } finally {
     Pop-Location
 }
@@ -33,6 +36,9 @@ Write-Host "`n[2/2] Running Rust Unit and Integration Tests..." -ForegroundColor
 Push-Location $RootDir
 try {
     cargo test
+    if ($LASTEXITCODE -ne 0) {
+        throw "Rust test suite failed with exit code $LASTEXITCODE."
+    }
 } finally {
     Pop-Location
 }

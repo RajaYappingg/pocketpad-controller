@@ -2,7 +2,7 @@ use pocketpad_core::diagnostics::Diagnostics;
 use pocketpad_core::network::NetworkUtils;
 use pocketpad_core::pairing::PairingManager;
 use pocketpad_core::server::{create_router, AppState};
-use pocketpad_core::virtual_controller::{create_virtual_controller, DriverStatus};
+use pocketpad_core::virtual_controller::{create_virtual_controllers, DriverStatus};
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -25,13 +25,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("============================================================");
 
     // 1. Initialize Virtual Controller Backend & Detect ViGEmBus Driver
-    let (controller, driver_status) = create_virtual_controller();
-    let controller = Arc::new(Mutex::new(controller));
+    const CONTROLLER_SLOTS: usize = 4;
+    let (controllers, driver_status) = create_virtual_controllers(CONTROLLER_SLOTS);
+    let controllers = Arc::new(Mutex::new(
+        controllers
+            .into_iter()
+            .map(|controller| pocketpad_core::server::ControllerSlot {
+                controller,
+                session_id: None,
+            })
+            .collect(),
+    ));
 
     match &driver_status {
         DriverStatus::Available { backend } => {
             println!("  [✓] Virtual Gamepad Backend: {backend}");
-            println!("  [✓] Genuine Xbox 360 controller emulation is ACTIVE.");
+            println!(
+                "  [✓] Genuine Xbox 360 controller emulation is ACTIVE ({CONTROLLER_SLOTS} slots)."
+            );
         }
         DriverStatus::DriverMissing { reason, help_url } => {
             println!("  [!] NOTICE: ViGEmBus Driver Not Initialized:");
@@ -83,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let app_state = AppState {
-        controller: Arc::clone(&controller),
+        controllers: Arc::clone(&controllers),
         driver_status,
         pairing,
         diagnostics,
@@ -94,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let router = create_router(app_state);
 
     // 4. Run Server with Graceful Shutdown on Ctrl+C
-    let controller_shutdown = Arc::clone(&controller);
+    let controllers_shutdown = Arc::clone(&controllers);
     let server = axum::serve(listener, router.into_make_service());
 
     tokio::select! {
@@ -110,9 +121,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clean disconnect of virtual controller on shutdown
     {
-        let mut ctrl = controller_shutdown.lock().unwrap();
-        let _ = ctrl.reset_neutral();
-        let _ = ctrl.disconnect();
+        let mut slots = controllers_shutdown.lock().unwrap();
+        for (slot_index, slot) in slots.iter_mut().enumerate() {
+            if let Err(error) = slot.controller.reset_neutral() {
+                error!("Failed to reset controller slot {slot_index} during shutdown: {error}");
+            }
+            if let Err(error) = slot.controller.disconnect() {
+                error!("Failed to disconnect controller slot {slot_index}: {error}");
+            }
+            slot.session_id = None;
+        }
     }
     println!("  [✓] Virtual device unplugged cleanly. Goodbye!");
 

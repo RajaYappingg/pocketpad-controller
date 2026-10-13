@@ -210,6 +210,33 @@ pub fn create_virtual_controller() -> (Box<dyn VirtualController>, DriverStatus)
     }
 }
 
+/// Creates the requested number of independent controller targets.
+///
+/// Each target uses the Xbox 360 target identity; ViGEmBus assigns each
+/// plugged-in target its own virtual controller instance.
+pub fn create_virtual_controllers(
+    count: usize,
+) -> (Vec<Box<dyn VirtualController>>, DriverStatus) {
+    let mut controllers = Vec::with_capacity(count);
+    let mut status = None;
+
+    for _ in 0..count {
+        let (controller, controller_status) = create_virtual_controller();
+        if status.is_none() {
+            status = Some(controller_status.clone());
+        }
+        controllers.push(controller);
+    }
+
+    (
+        controllers,
+        status.unwrap_or(DriverStatus::DriverMissing {
+            reason: "No controller slots were configured.".to_string(),
+            help_url: "https://github.com/nefarius/ViGEmBus/releases",
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

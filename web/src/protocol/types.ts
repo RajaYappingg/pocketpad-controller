@@ -63,6 +63,8 @@ export interface HostInfo {
   port: number;
   activeClientConnected: boolean;
   activeClientIp?: string;
+  activeClients: number;
+  controllerSlots: number;
   packetsReceived: number;
   rttMs?: number;
 }

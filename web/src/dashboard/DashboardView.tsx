@@ -181,7 +181,10 @@ export function DashboardView({
                 </tr>
                 <tr>
                   <td>Active Client</td>
-                  <td>{hostInfo.activeClientIp || 'None'}</td>
+                  <td>
+                    {hostInfo.activeClients}/{hostInfo.controllerSlots}
+                    {hostInfo.activeClientIp ? ` (${hostInfo.activeClientIp})` : ''}
+                  </td>
                 </tr>
                 <tr>
                   <td>Latency (RTT)</td>
