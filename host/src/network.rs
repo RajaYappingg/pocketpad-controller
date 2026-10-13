@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 
 pub struct NetworkUtils;
@@ -59,7 +57,10 @@ mod tests {
 
     #[test]
     fn test_url_formatting() {
-        let url = NetworkUtils::build_controller_url("192.168.1.50", 41234, "5678");
-        assert_eq!(url, "http://192.168.1.50:41234/?mode=controller&code=5678");
+        let url = NetworkUtils::build_controller_url("192.168.1.50", 41234, "AB12CD");
+        assert_eq!(
+            url,
+            "http://192.168.1.50:41234/?mode=controller&code=AB12CD"
+        );
     }
 }

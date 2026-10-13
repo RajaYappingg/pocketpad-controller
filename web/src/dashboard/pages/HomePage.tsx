@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useState, useMemo } from 'preact/hooks';
 import { HostInfo, SlotInfo } from '../../protocol/types';
 import { QRCode } from '../../components/qrcode';
 import { ControllerGraphic } from '../components/ControllerGraphic';
@@ -40,23 +40,34 @@ export function HomePage({
   const detectedHost = hostInfo.serverUrl.replace(/^https?:\/\//, '').split(':')[0] || '127.0.0.1';
   const currentIp = selectedIp || detectedHost;
   const effectiveServerUrl = `http://${currentIp}:${hostInfo.port}`;
-  const controllerUrl = `${effectiveServerUrl}/?mode=controller&code=${hostInfo.pairingCode}`;
-  const qrSvg = QRCode.generateSVG(controllerUrl, 180, 4);
+  // P0: /api/status redacts pairingCode for non-loopback callers. When empty,
+  // the dashboard is viewed remotely — direct the user to the host screen.
+  const hasPairingCode = (hostInfo.pairingCode || '').length > 0;
+  const controllerUrl = hasPairingCode
+    ? `${effectiveServerUrl}/?mode=controller&code=${hostInfo.pairingCode}`
+    : `${effectiveServerUrl}/?mode=controller`;
+  // P1: QR generation walks ~1-4k modules with string concat — memoize so
+  // the 1.5s status poll doesn't rebuild it on every render.
+  const qrSvg = useMemo(
+    () => (hasPairingCode ? QRCode.generateSVG(controllerUrl, 180, 4) : ''),
+    [controllerUrl, hasPairingCode],
+  );
 
-  const pairingCodeChars = (hostInfo.pairingCode || '0000').split('');
+  const pairingCodeChars = (hostInfo.pairingCode || '------').split('');
 
   const copyCode = () => {
+    if (!hasPairingCode) return;
     navigator.clipboard.writeText(hostInfo.pairingCode).then(() => {
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 2000);
-    });
+    }).catch(() => {});
   };
 
   const copyUrl = () => {
     navigator.clipboard.writeText(controllerUrl).then(() => {
       setCopiedUrl(true);
       setTimeout(() => setCopiedUrl(false), 2000);
-    });
+    }).catch(() => {});
   };
 
   return (
@@ -263,6 +274,14 @@ export function HomePage({
 
           {pairingTab === 'qr' ? (
             <div className="pairing-tab-content">
+              {!hasPairingCode ? (
+                <div className="pairing-steps-list">
+                  <div className="pairing-step-item">
+                    <span className="step-text">Pairing code is only shown on the host PC screen. Open this dashboard directly on the PC (http://localhost) to pair a new phone.</span>
+                  </div>
+                </div>
+              ) : (
+              <div style="display:contents">
               {/* QR Code with Red Glowing Border */}
               <div className="qr-glowing-frame">
                 <div
@@ -315,6 +334,8 @@ export function HomePage({
                   <span className="step-text">Start playing.</span>
                 </div>
               </div>
+              </div>
+              )}
             </div>
           ) : (
             <div className="pairing-tab-content manual-content">
@@ -345,7 +366,7 @@ export function HomePage({
 
               <div className="manual-field-group">
                 <label className="manual-label">Pairing Code</label>
-                <div className="manual-code-value">{hostInfo.pairingCode}</div>
+                <div className="manual-code-value">{hasPairingCode ? hostInfo.pairingCode : '— (see host PC screen)'}</div>
               </div>
 
               <div className="manual-field-group">

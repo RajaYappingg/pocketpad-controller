@@ -196,6 +196,7 @@ html, body {
 .dashboard-app-root {
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   display: flex;
   overflow: hidden;
   background-color: var(--background);
@@ -209,6 +210,7 @@ html, body {
   width: 220px;
   min-width: 220px;
   height: 100vh;
+  height: 100dvh;
   background: #070709;
   border-right: 1px solid var(--border-subtle);
   display: flex;
@@ -294,6 +296,7 @@ html, body {
 .dashboard-main-viewport {
   flex: 1;
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -374,6 +377,9 @@ html, body {
   padding: 24px 28px;
   display: flex;
   flex-direction: column;
+  /* P2: html/body use touch-action:none for the gamepad; re-enable
+     vertical panning here so the dashboard scrolls on touch. */
+  touch-action: pan-y;
 }
 
 /* Persistent Bottom Status Bar */
@@ -2020,6 +2026,7 @@ html, body {
 .controller-root {
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   background-color: var(--bg-amoled);
   display: flex;
   flex-direction: column;
@@ -2064,6 +2071,46 @@ html, body {
 @keyframes rotatePhone {
   0%, 100% { transform: rotate(0deg); }
   50% { transform: rotate(90deg); }
+}
+
+/* P4: small landscape phones (<700px) — shrink center column and clusters
+   so the 3-column stage fits iPhone SE landscape (568px). */
+@media (max-width: 700px) {
+  .ctrl-stage {
+    grid-template-columns: 1fr 110px 1fr;
+    padding: 6px 10px 10px 10px;
+    gap: 8px;
+  }
+  .joystick-zone,
+  .dpad-container,
+  .face-diamond {
+    width: 110px;
+    height: 110px;
+  }
+  .dpad-up { left: 31px; width: 48px; height: 48px; }
+  .dpad-down { left: 31px; width: 48px; height: 48px; }
+  .dpad-left { top: 31px; width: 48px; height: 48px; }
+  .dpad-right { top: 31px; width: 48px; height: 48px; }
+  .dpad-center-hub { top: 31px; left: 31px; }
+  .btn-face { width: 40px; height: 40px; font-size: 15px; }
+  .btn-face.btn-a { left: 35px; }
+  .btn-face.btn-y { left: 35px; }
+  .btn-face.btn-x { top: 35px; }
+  .btn-face.btn-b { top: 35px; }
+}
+
+/* P2: keyboard users + reduced-motion */
+.btn:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .portrait-warning svg {
+    animation: none;
+  }
 }
 
 /* Controller Header (Status, Ping, Settings) */

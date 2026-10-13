@@ -65,7 +65,7 @@ pub struct DiagnosticsSnapshot {
 
 impl Diagnostics {
     pub fn new() -> Self {
-        Self::with_slot_count(4)
+        Self::with_slot_count(crate::CONTROLLER_SLOTS)
     }
 
     pub fn with_slot_count(slots: usize) -> Self {
@@ -87,7 +87,9 @@ impl Diagnostics {
 
     pub fn record_packet(&self, bytes: usize) {
         self.inner.packets_received.fetch_add(1, Ordering::Relaxed);
-        self.inner.bytes_received.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.inner
+            .bytes_received
+            .fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
     pub fn record_slot_packet(&self, slot_index: usize, bytes: usize) {
@@ -109,10 +111,10 @@ impl Diagnostics {
         if let Some(slot) = self.inner.slots.get(slot_index) {
             if let Some(ref client_ip) = ip {
                 slot.connected.store(true, Ordering::SeqCst);
-                *slot.client_ip.lock().unwrap() = Some(client_ip.clone());
+                *slot.client_ip.lock().unwrap_or_else(|e| e.into_inner()) = Some(client_ip.clone());
             } else {
                 slot.connected.store(false, Ordering::SeqCst);
-                *slot.client_ip.lock().unwrap() = None;
+                *slot.client_ip.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 slot.rtt_ms.store(0, Ordering::Relaxed);
             }
         }
@@ -140,9 +142,17 @@ impl Diagnostics {
 
         for (i, slot) in self.inner.slots.iter().enumerate() {
             let connected = slot.connected.load(Ordering::SeqCst);
-            let client_ip = slot.client_ip.lock().unwrap().clone();
+            let client_ip = slot
+                .client_ip
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             let rtt = slot.rtt_ms.load(Ordering::Relaxed);
-            let rtt_opt = if connected && rtt > 0 { Some(rtt) } else { None };
+            let rtt_opt = if connected && rtt > 0 {
+                Some(rtt)
+            } else {
+                None
+            };
 
             if connected {
                 any_connected = true;

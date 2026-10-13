@@ -26,6 +26,10 @@ export function ControllerView({
 }: ControllerViewProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [, setFullscreen] = useState(false);
+  // P3: portrait warning is advisory — never block pairing. Only show once
+  // connected, and allow dismissal (small phones pair in portrait).
+  const [portraitDismissed, setPortraitDismissed] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   // Mutable controller state object (zero allocations in hot loop)
   const stateRef = useRef<ControllerState>({
@@ -43,12 +47,13 @@ export function ControllerView({
   const isDirty = useRef(false);
   const lastSentTime = useRef(0);
 
-  // Send loop: ~100Hz tick or immediately when dirty, plus heartbeat every 100ms
+  // Send loop: ~100Hz tick or immediately when dirty, plus heartbeat every 100ms.
+  // P3: skip work when tab hidden to save phone battery.
   useEffect(() => {
     let animId: number;
 
     const tick = (now: number) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (!document.hidden && ws && ws.readyState === WebSocket.OPEN) {
         const timeSinceLast = now - lastSentTime.current;
         if (isDirty.current || timeSinceLast >= 100) {
           const packet = encoderRef.current.encodeInput(stateRef.current);
@@ -75,10 +80,16 @@ export function ControllerView({
     }
   };
 
-  // Button press handler using pointer events
+  // Button press handler using pointer events.
+  // P3: bitmask is captured per-pointer at down-time; up/cancel clears the
+  // STORED mask so toggling southpaw mid-press cannot leave a stuck bit.
   const handleButtonDown = (e: PointerEvent, bitmask: number) => {
     e.preventDefault();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer already gone (e.g. browser stole capture) — still track it.
+    }
     activePointers.current.set(e.pointerId, bitmask);
     stateRef.current.buttons |= bitmask;
     isDirty.current = true;
@@ -86,12 +97,17 @@ export function ControllerView({
     vibrate(14);
   };
 
-  const handleButtonUp = (e: PointerEvent, bitmask: number) => {
+  const clearButtonPointer = (e: PointerEvent, fallbackMask: number) => {
     e.preventDefault();
+    const stored = activePointers.current.get(e.pointerId);
     activePointers.current.delete(e.pointerId);
-    stateRef.current.buttons &= ~bitmask;
+    stateRef.current.buttons &= ~(stored ?? fallbackMask);
     isDirty.current = true;
     (e.currentTarget as HTMLElement).classList.remove('active');
+  };
+
+  const handleButtonUp = (e: PointerEvent, bitmask: number) => {
+    clearButtonPointer(e, bitmask);
   };
 
   const dpadPointerId = useRef<number | null>(null);
@@ -102,7 +118,11 @@ export function ControllerView({
   const handleTriggerDown = (e: PointerEvent, isRight: boolean) => {
     e.preventDefault();
     const el = e.currentTarget as HTMLElement;
-    el.setPointerCapture(e.pointerId);
+    try {
+      el.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore — move/up listeners below still work without capture
+    }
     activePointers.current.set(e.pointerId, isRight ? 999 : 998);
     el.classList.add('active');
     vibrate(16);
@@ -215,7 +235,11 @@ export function ControllerView({
     e.preventDefault();
     const container = e.currentTarget as HTMLElement;
     dpadPointerId.current = e.pointerId;
-    container.setPointerCapture(e.pointerId);
+    try {
+      container.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore — gliding still tracks via pointermove on the container
+    }
     updateDpadState(e.clientX, e.clientY, container);
   };
 
@@ -241,8 +265,18 @@ export function ControllerView({
     container.querySelectorAll('.dpad-btn').forEach((b) => b.classList.remove('active'));
   };
 
-  // Failsafe: reset all held buttons on window blur, visibility change, or connection drop
+  // Failsafe: reset all held buttons on window blur, visibility change, or connection drop.
+  // P3: scope `.active` cleanup to the controller root — the old global
+  // `document.querySelectorAll('.active')` also wiped settings-modal/header UI.
   useEffect(() => {
+    const clearActives = () => {
+      const root = rootRef.current;
+      if (root) {
+        root.querySelectorAll('.active').forEach((el) => el.classList.remove('active'));
+      } else {
+        document.querySelectorAll('.controller-root .active').forEach((el) => el.classList.remove('active'));
+      }
+    };
     const resetAll = () => {
       stateRef.current.buttons = 0;
       stateRef.current.leftTrigger = 0;
@@ -255,7 +289,7 @@ export function ControllerView({
       currentDpadMask.current = 0;
       dpadPointerId.current = null;
       isDirty.current = true;
-      document.querySelectorAll('.active').forEach((el) => el.classList.remove('active'));
+      clearActives();
     };
     const handleVisibilityChange = () => {
       if (document.hidden) resetAll();
@@ -284,7 +318,13 @@ export function ControllerView({
       else if (control === 999) stateRef.current.rightTrigger = 0;
       else stateRef.current.buttons &= ~control;
       isDirty.current = true;
-      (pointerEvent.target as HTMLElement | null)?.classList.remove('active');
+      const target = pointerEvent.target as HTMLElement | null;
+      // Target may be document/window when capture is stolen — guard it.
+      if (target && typeof target.classList !== 'undefined') {
+        target.classList.remove('active');
+      } else {
+        clearActives();
+      }
     };
 
     if (!isConnected) resetAll();
@@ -335,17 +375,26 @@ export function ControllerView({
   const opacityStyle = { opacity: settings.buttonOpacity };
 
   return (
-    <div className="controller-root">
-      {/* Portrait rotation warning for mobile */}
-      <div className="portrait-warning">
-        <svg viewBox="0 0 24 24">
+    <div className="controller-root" ref={rootRef}>
+      {/* Portrait hint: advisory only, never blocks pairing (P3). */}
+      {isConnected && !portraitDismissed && (
+      <div className="portrait-warning" role="status">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z" />
         </svg>
         <h2 style={{ fontSize: '18px', fontWeight: 700 }}>Rotate to Landscape</h2>
         <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>
           PocketPad gamepad is optimized for landscape orientation.
         </p>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={() => setPortraitDismissed(true)}
+        >
+          Continue in Portrait
+        </button>
       </div>
+      )}
 
       {/* Controller header */}
       <div className="ctrl-header">
@@ -373,8 +422,8 @@ export function ControllerView({
         </div>
 
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <button className="ctrl-header-btn" onClick={toggleFullscreen} title="Fullscreen">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <button className="ctrl-header-btn" onClick={toggleFullscreen} title="Fullscreen" aria-label="Toggle fullscreen">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
             </svg>
           </button>
@@ -382,8 +431,9 @@ export function ControllerView({
             className="ctrl-header-btn"
             onClick={() => setShowSettings(true)}
             title="Settings"
+            aria-label="Open controller settings"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
             </svg>
           </button>
@@ -392,14 +442,15 @@ export function ControllerView({
             style={{ color: 'var(--accent-red)' }}
             onClick={onDisconnectRequest}
             title="Close Controller"
+            aria-label="Disconnect controller"
           >
             ✕
           </button>
         </div>
       </div>
 
-      {/* Main Gamepad Surface */}
-      <div className="ctrl-stage">
+      {/* Main Gamepad Surface (P4: controlScale zooms layout for small phones) */}
+      <div className="ctrl-stage" style={{ zoom: settings.controlScale } as any}>
         {/* Left Wing */}
         <div className="ctrl-wing" style={opacityStyle}>
           {/* Shoulder & Trigger */}

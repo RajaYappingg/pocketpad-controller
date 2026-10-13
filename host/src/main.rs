@@ -3,12 +3,39 @@ use pocketpad_core::network::NetworkUtils;
 use pocketpad_core::pairing::PairingManager;
 use pocketpad_core::server::{create_router, AppState};
 use pocketpad_core::virtual_controller::{create_virtual_controllers, DriverStatus};
+use pocketpad_core::CONTROLLER_SLOTS;
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tracing::error;
+
+fn resolve_port() -> u16 {
+    let args: Vec<String> = std::env::args().collect();
+    for i in 0..args.len() {
+        if (args[i] == "--port" || args[i] == "-p") && i + 1 < args.len() {
+            if let Ok(p) = args[i + 1].parse::<u16>() {
+                return p;
+            }
+        }
+        if let Some(rest) = args[i].strip_prefix("--port=") {
+            if let Ok(p) = rest.parse::<u16>() {
+                return p;
+            }
+        }
+    }
+    if let Ok(env) = std::env::var("POCKETPAD_PORT") {
+        if let Ok(p) = env.trim().parse::<u16>() {
+            return p;
+        }
+    }
+    3000
+}
+
+fn no_browser_requested() -> bool {
+    std::env::args().any(|a| a == "--no-browser")
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,7 +52,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("============================================================");
 
     // 1. Initialize Virtual Controller Backend & Detect ViGEmBus Driver
-    const CONTROLLER_SLOTS: usize = 4;
     let (controllers, driver_status) = create_virtual_controllers(CONTROLLER_SLOTS);
     let controllers = Arc::new(
         controllers
@@ -56,16 +82,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // 2. Network and Port Configuration
-    let port = 3000;
+    // 2. Network and Port Configuration (--port/-p/--port=N or POCKETPAD_PORT env)
+    let port = resolve_port();
     let bind_addr = SocketAddr::from(([0, 0, 0, 0], port));
 
     let listener = match TcpListener::bind(bind_addr).await {
         Ok(l) => l,
         Err(e) => {
             error!("Failed to bind to port {port}: {e}");
-            println!("  [!] Port {port} is occupied. Attempting alternative port 3001...");
-            TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 3001))).await?
+            let fallback = port.wrapping_add(1);
+            println!("  [!] Port {port} is occupied. Attempting alternative port {fallback}...");
+            TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], fallback))).await?
         }
     };
 
@@ -78,25 +105,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pairing = PairingManager::new();
     let pairing_cleanup_handle = pairing.clone();
     let pairing_code = pairing.get_pairing_code();
-    let diagnostics = Diagnostics::new();
+    let diagnostics = Diagnostics::with_slot_count(CONTROLLER_SLOTS);
     let (disconnect_tx, _) = broadcast::channel::<Option<usize>>(16);
 
     println!("------------------------------------------------------------");
     println!("  Desktop Dashboard : {dashboard_url}");
+    // Host console is trusted physical access: showing the code + URL here
+    // is required for QR pairing. The code is NOT exposed via /api/status
+    // to non-loopback clients (see server::api_status).
     println!("  Phone Gamepad URL : {mobile_url}&code={pairing_code}");
-    println!("  Pairing Code      : {pairing_code}");
+    println!("  Pairing Code      : {pairing_code} (6 chars, rotates after 20 failed guesses)");
     println!("------------------------------------------------------------");
     println!("  Windows Verification: Run 'joy.cpl' to test inputs.");
     println!("  Press Ctrl+C to stop PocketPad safely.");
     println!("============================================================");
 
-    // Optionally launch browser to dashboard
-    tokio::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        let _ = std::process::Command::new("cmd")
-            .args(["/c", "start", &dashboard_url])
-            .spawn();
-    });
+    // Optionally launch browser to dashboard (--no-browser to skip)
+    if !no_browser_requested() {
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", &dashboard_url])
+                .spawn();
+        });
+    }
 
     let app_state = AppState {
         controllers: Arc::clone(&controllers),
@@ -105,6 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         diagnostics,
         port: actual_port,
         disconnect_notify: Arc::new(disconnect_tx),
+        slot_claim: Arc::new(Mutex::new(())),
     };
 
     let router = create_router(app_state);
@@ -117,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let pairing_cleanup = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         loop {
             interval.tick().await;
             pairing_cleanup_handle.cleanup();

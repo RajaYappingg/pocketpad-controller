@@ -1,7 +1,7 @@
 {
   "name": "PocketPad Gamepad",
   "short_name": "PocketPad",
-  "start_url": "/?mode=controller",
+  "start_url": "./?mode=controller",
   "display": "fullscreen",
   "orientation": "landscape",
   "background_color": "#000000",

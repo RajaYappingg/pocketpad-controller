@@ -53,8 +53,12 @@ fn test_simultaneous_multi_control_pipeline() {
     controller.update(&state).expect("Update should succeed");
 
     assert!(controller.last_state.is_button_pressed(buttons::A));
-    assert!(controller.last_state.is_button_pressed(buttons::LEFT_SHOULDER));
-    assert!(controller.last_state.is_button_pressed(buttons::RIGHT_THUMB));
+    assert!(controller
+        .last_state
+        .is_button_pressed(buttons::LEFT_SHOULDER));
+    assert!(controller
+        .last_state
+        .is_button_pressed(buttons::RIGHT_THUMB));
     assert_eq!(controller.last_state.left_trigger, 180);
     assert_eq!(controller.last_state.right_trigger, 0);
     assert_eq!(controller.last_state.thumb_lx, -25000);
@@ -102,10 +106,11 @@ fn test_watchdog_neutral_reset_pipeline() {
 fn test_pairing_workflow_and_token_reuse() {
     let pairing = PairingManager::new();
     let code = pairing.get_pairing_code();
+    assert_eq!(code.len(), 6);
     let client_ip = "192.168.1.150";
 
     // Invalid attempt
-    assert!(pairing.verify_code(client_ip, "99999").is_err());
+    assert!(pairing.verify_code(client_ip, "ZZZZZZ").is_err() || code == "ZZZZZZ");
 
     // Valid attempt returns reusable token
     let token = pairing.verify_code(client_ip, &code).unwrap();
@@ -114,6 +119,10 @@ fn test_pairing_workflow_and_token_reuse() {
     // Token works even if code is regenerated
     let second_token = pairing.verify_code(client_ip, &code).unwrap();
     assert!(pairing.verify_token(&second_token, client_ip));
+
+    // Revoked tokens stop working
+    pairing.invalidate(&token);
+    assert!(!pairing.verify_token(&token, client_ip));
 }
 
 #[test]

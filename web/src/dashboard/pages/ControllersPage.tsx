@@ -2,7 +2,6 @@ import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import { HostInfo, SlotInfo } from '../../protocol/types';
 import { PhonePreviewGraphic } from '../components/PhonePreviewGraphic';
-import { LiveInputPreview } from '../components/LiveInputPreview';
 
 interface ControllersPageProps {
   hostInfo: HostInfo;
@@ -193,9 +192,24 @@ export function ControllersPage({
                   </div>
                 </div>
 
-                {/* Section 3: Input Preview */}
+                {/* Section 3: Session stats (P3: dashboard has no live input
+                    stream — show real slot telemetry instead of a fake
+                    neutral preview) */}
                 <div className="row-sec-input-preview">
-                  <LiveInputPreview isConnected={slot.connected} />
+                  <div className="input-preview-group" role="status" aria-label={`Session stats for ${displayName}`}>
+                    <div className="input-preview-label">Session</div>
+                    <div className="device-meta-chips">
+                      <span className="meta-chip">
+                        {slot.packetsReceived} packets
+                      </span>
+                      <span className="meta-chip">
+                        {slot.rttMs !== undefined && slot.rttMs !== null ? `${slot.rttMs} ms` : 'rtt —'}
+                      </span>
+                      <span className="meta-chip">
+                        {slot.clientIp ?? 'ip hidden'}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Section 4: Actions */}

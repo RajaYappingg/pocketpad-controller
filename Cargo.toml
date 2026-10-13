@@ -2,12 +2,10 @@
 members = ["host"]
 resolver = "2"
 
-[profile.dev]
-incremental = false
-
-[profile.test]
-incremental = false
-
+# Dev/test use Cargo defaults (incremental on) for fast iteration.
+# Release is size- and speed-tuned: fat LTO + single codegen unit gives a
+# ~2MB self-contained exe (web UI embedded). panic="abort" and strip are
+# intentional for size; crash dumps use tracing logs, not backtraces.
 [profile.release]
 opt-level = 3
 lto = true

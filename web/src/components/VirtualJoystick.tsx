@@ -48,7 +48,11 @@ export function VirtualJoystick({
       moved.current = false;
       touchStartPos.current = { x: e.clientX, y: e.clientY };
       touchStartTime.current = performance.now();
-      el.setPointerCapture(e.pointerId);
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        // Pointer gone or capture unsupported — drag tracking still works.
+      }
 
       const rect = el.getBoundingClientRect();
       centerPos.current = {

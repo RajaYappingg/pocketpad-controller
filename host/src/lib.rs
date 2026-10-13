@@ -1,3 +1,6 @@
+/// Number of independent virtual controller slots (four-player support).
+pub const CONTROLLER_SLOTS: usize = 4;
+
 pub mod controller_state;
 pub mod diagnostics;
 pub mod network;

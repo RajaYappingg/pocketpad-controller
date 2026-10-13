@@ -1,5 +1,5 @@
 # PocketPad Test Script
-# Runs frontend TypeScript type checking and all Rust unit/integration tests.
+# Fast frontend type check + full Rust unit/integration tests + lints.
 
 $ErrorActionPreference = "Stop"
 
@@ -18,27 +18,29 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     }
 }
 
-# 1. Frontend verification
-Write-Host "`n[1/2] Verifying Frontend TypeScript and Bundle..." -ForegroundColor Yellow
+function Invoke-Native([string]$Label, [scriptblock]$Cmd) {
+    Write-Host "`n$Label" -ForegroundColor Yellow
+    & $Cmd
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label failed with exit code $LASTEXITCODE."
+    }
+}
+
+# 1. Frontend type check (fast, no emit)
 Push-Location $WebDir
 try {
-    pnpm run build
-    if ($LASTEXITCODE -ne 0) {
-        throw "Frontend verification failed with exit code $LASTEXITCODE."
-    }
+    Invoke-Native "[1/5] Type-checking web (tsc --noEmit)" { pnpm exec tsc --noEmit }
+    Invoke-Native "[2/5] Web protocol tests (vitest)" { pnpm exec vitest run }
 } finally {
     Pop-Location
 }
-Write-Host "  [OK] Frontend TypeScript check and build passed" -ForegroundColor Green
 
-# 2. Rust test suite
-Write-Host "`n[2/2] Running Rust Unit and Integration Tests..." -ForegroundColor Yellow
+# 2. Rust tests (locked deps, all targets)
 Push-Location $RootDir
 try {
-    cargo test
-    if ($LASTEXITCODE -ne 0) {
-        throw "Rust test suite failed with exit code $LASTEXITCODE."
-    }
+    Invoke-Native "[3/5] Running Rust tests" { cargo test --locked --all-targets }
+    Invoke-Native "[4/5] Clippy (deny warnings)" { cargo clippy --locked --all-targets -- -D warnings }
+    Invoke-Native "[5/5] rustfmt check" { cargo fmt --check }
 } finally {
     Pop-Location
 }

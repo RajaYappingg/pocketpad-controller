@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { HostInfo, ControllerSettings, DEFAULT_SETTINGS } from './protocol/types';
-import { BinaryProtocolEncoder, PACKET_TYPE } from './protocol/binary_protocol';
+import { BinaryProtocolEncoder } from './protocol/binary_protocol';
 import { DashboardView } from './dashboard/DashboardView';
 import { ControllerView } from './controller/ControllerView';
 
@@ -222,7 +222,7 @@ export function App() {
 
     // If no credentials yet, prompt user with pairing modal instead of failing
     const currentToken = sessionTokenRef.current;
-    const currentCode = pairingCodeInput.trim();
+    const currentCode = pairingCodeInput.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
     if (!currentToken && !currentCode) {
       setShowPairingModal(true);
@@ -231,13 +231,25 @@ export function App() {
 
     let reconnectTimer: number;
     let isDisposed = false;
+    let attempt = 0;
+
+    const scheduleReconnect = () => {
+      if (isDisposed) return;
+      // Don't storm when the user must act (bad code/token): the effect
+      // re-runs when they submit a new code via pairingCodeInput.
+      if (authError) return;
+      attempt += 1;
+      const capped = Math.min(2000 * 2 ** (attempt - 1), 10000);
+      const jitter = Math.random() * 500;
+      reconnectTimer = window.setTimeout(connect, capped + jitter);
+    };
 
     const connect = () => {
       if (isDisposed) return;
       let hasOpened = false;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const tokenToUse = sessionTokenRef.current;
-      const codeToUse = pairingCodeInput.trim();
+      const codeToUse = pairingCodeInput.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
       if (!tokenToUse && !codeToUse) {
         setShowPairingModal(true);
@@ -256,6 +268,7 @@ export function App() {
 
         ws.onopen = () => {
           hasOpened = true;
+          attempt = 0;
           setIsConnected(true);
           setAuthError(null);
           setShowPairingModal(false);
@@ -271,23 +284,37 @@ export function App() {
         };
 
         ws.onmessage = (event) => {
-          if (event.data instanceof ArrayBuffer) {
-            const buf = event.data;
-            if (buf.byteLength >= 7) {
-              const view = new DataView(buf);
-              const pType = view.getUint8(2);
-              if (pType === PACKET_TYPE.PONG) {
-                const sentTime = view.getUint32(3, true);
-                const rtt = Math.round(performance.now() - sentTime);
+          const handleBuffer = (buf: ArrayBuffer) => {
+            // Exact-length dispatch: 7B ping/pong, 5B rumble. A 5B rumble
+            // must never be misread as a 7B pong.
+            if (buf.byteLength === 7) {
+              const pongTs = BinaryProtocolEncoder.decodePong(buf);
+              if (pongTs !== null) {
+                const rtt = Math.round(performance.now() - pongTs);
                 setPingMs(Math.max(0, rtt));
                 ws.send(JSON.stringify({ rttMs: Math.max(0, rtt) }));
+                return;
               }
-            } else if (buf.byteLength >= 5) {
+              // P3: answer server keepalive pings so the host can measure
+              // RTT without trusting client self-reports.
+              const pingTs = BinaryProtocolEncoder.decodePing(buf);
+              if (pingTs !== null) {
+                ws.send(BinaryProtocolEncoder.encodePong(pingTs));
+              }
+              return;
+            }
+            if (buf.byteLength === 5) {
               const rumble = BinaryProtocolEncoder.decodeRumble(buf);
               if (rumble) {
                 triggerRumble(rumble.largeMotor, rumble.smallMotor);
               }
             }
+          };
+          if (event.data instanceof ArrayBuffer) {
+            handleBuffer(event.data);
+          } else if (event.data instanceof Blob) {
+            // Some browsers deliver binary frames as Blob despite binaryType.
+            event.data.arrayBuffer().then(handleBuffer).catch(() => {});
           } else if (typeof event.data === 'string') {
             try {
               const msg = JSON.parse(event.data);
@@ -355,7 +382,7 @@ export function App() {
           }
 
           if (!isDisposed && !authError) {
-            reconnectTimer = window.setTimeout(connect, 2000);
+            scheduleReconnect();
           }
         };
 
@@ -363,9 +390,7 @@ export function App() {
           ws.close();
         };
       } catch (err) {
-        if (!isDisposed && !authError) {
-          reconnectTimer = window.setTimeout(connect, 2000);
-        }
+        scheduleReconnect();
       }
     };
 
@@ -394,7 +419,10 @@ export function App() {
   const handleDisconnectClient = async (slot?: number) => {
     try {
       const url = slot !== undefined ? `/api/disconnect?slot=${slot}` : '/api/disconnect';
-      await fetch(url, { method: 'POST' });
+      const res = await fetch(url, { method: 'POST' });
+      if (!res.ok && res.status === 403) {
+        console.warn('Disconnect rejected: dashboard must run on the host PC');
+      }
     } catch {
       // ignore
     }
@@ -440,8 +468,8 @@ export function App() {
   };
 
   const handlePairingSubmit = (code: string) => {
-    const clean = code.trim();
-    if (clean.length === 4) {
+    const clean = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    if (clean.length === 6) {
       setPairingCodeInput(clean);
       localStorage.setItem(CODE_KEY, clean);
       setSessionToken(null);
@@ -495,7 +523,7 @@ export function App() {
     return (
       <div style={{ width: '100%', height: '100%' }}>
         {showPairingModal && (
-          <div className="pairing-modal-overlay">
+          <div className="pairing-modal-overlay" role="dialog" aria-modal="true" aria-label="Pair PocketPad gamepad">
             <div className="pairing-modal-card">
               <div style={{ fontSize: '32px' }}>📱</div>
               <div>
@@ -503,7 +531,7 @@ export function App() {
                   Pair PocketPad Gamepad
                 </h2>
                 <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                  Enter the 4-digit pairing code shown on your Windows desktop screen:
+                  Enter the 6-character pairing code shown on your Windows desktop screen:
                 </p>
               </div>
 
@@ -532,17 +560,22 @@ export function App() {
               >
                 <input
                   type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={4}
-                  placeholder="••••"
+                  inputMode="text"
+                  pattern="[A-Z0-9]*"
+                  maxLength={6}
+                  placeholder="••••••"
                   value={pairingInputDraft}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  autoComplete="off"
+                  spellcheck={false}
                   onInput={(e) => {
                     const val = (e.target as HTMLInputElement).value
-                      .replace(/\D/g, '')
-                      .slice(0, 4);
+                      .toUpperCase()
+                      .replace(/[^A-Z0-9]/g, '')
+                      .slice(0, 6);
                     setPairingInputDraft(val);
-                    if (val.length === 4) {
+                    if (val.length === 6) {
                       handlePairingSubmit(val);
                     }
                   }}
@@ -553,7 +586,7 @@ export function App() {
                   type="submit"
                   className="btn btn-primary"
                   style={{ width: '100%', padding: '12px', fontSize: '14px', fontWeight: 700 }}
-                  disabled={pairingInputDraft.trim().length !== 4}
+                  disabled={pairingInputDraft.trim().length !== 6}
                 >
                   Connect Controller
                 </button>

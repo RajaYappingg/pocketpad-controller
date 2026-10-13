@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::protocol::RawInputPacket;
 
 pub mod buttons {
@@ -9,16 +7,21 @@ pub mod buttons {
     pub const DPAD_RIGHT: u16 = 0x0008;
     pub const START: u16 = 0x0010;
     pub const BACK: u16 = 0x0020;
-    pub const LEFT_THUMB: u16 = 0x0040;   // LS Click
-    pub const RIGHT_THUMB: u16 = 0x0080;  // RS Click
-    pub const LEFT_SHOULDER: u16 = 0x0100;// LB
-    pub const RIGHT_SHOULDER: u16 = 0x0200;// RB
-    pub const GUIDE: u16 = 0x0400;        // Xbox Guide
+    pub const LEFT_THUMB: u16 = 0x0040; // LS Click
+    pub const RIGHT_THUMB: u16 = 0x0080; // RS Click
+    pub const LEFT_SHOULDER: u16 = 0x0100; // LB
+    pub const RIGHT_SHOULDER: u16 = 0x0200; // RB
+    pub const GUIDE: u16 = 0x0400; // Xbox Guide
     pub const A: u16 = 0x1000;
     pub const B: u16 = 0x2000;
     pub const X: u16 = 0x4000;
     pub const Y: u16 = 0x8000;
+    /// All currently defined button bits. Packets must not set bits outside this.
+    pub const ALL: u16 = 0xFFFF;
 }
+
+/// XInput default left/right thumb deadzone in raw units.
+pub const THUMB_DEADZONE: i16 = 7849;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ControllerState {
@@ -67,7 +70,7 @@ impl ControllerState {
 
     /// Converts a received raw packet into sanitized ControllerState
     pub fn from_raw_packet(raw: &RawInputPacket) -> Self {
-        Self {
+        let mut state = Self {
             buttons: raw.buttons,
             left_trigger: raw.left_trigger,
             right_trigger: raw.right_trigger,
@@ -75,13 +78,28 @@ impl ControllerState {
             thumb_ly: raw.thumb_ly,
             thumb_rx: raw.thumb_rx,
             thumb_ry: raw.thumb_ry,
+        };
+        state.sanitize();
+        state
+    }
+
+    fn apply_deadzone(v: i16) -> i16 {
+        if v.unsigned_abs() < THUMB_DEADZONE as u16 {
+            0
+        } else {
+            v
         }
     }
 
-    /// Clamps and sanitizes inputs to valid hardware bounds
+    /// Clamps and sanitizes inputs to valid hardware bounds.
+    /// Masks reserved button bits and applies the XInput thumb deadzone
+    /// so drifting sticks settle at center instead of creeping.
     pub fn sanitize(&mut self) {
-        // i16 range is already -32768..=32767
-        // Triggers are u8: 0..=255
+        self.buttons &= buttons::ALL;
+        self.thumb_lx = Self::apply_deadzone(self.thumb_lx);
+        self.thumb_ly = Self::apply_deadzone(self.thumb_ly);
+        self.thumb_rx = Self::apply_deadzone(self.thumb_rx);
+        self.thumb_ry = Self::apply_deadzone(self.thumb_ry);
     }
 }
 
@@ -140,5 +158,25 @@ mod tests {
         assert_eq!(state.thumb_ly, 12000);
         assert_eq!(state.thumb_rx, 30000);
         assert_eq!(state.thumb_ry, -30000);
+    }
+
+    #[test]
+    fn test_sanitize_deadzone_and_mask() {
+        let raw = RawInputPacket {
+            sequence: 1,
+            buttons: 0xFFFF,
+            left_trigger: 0,
+            right_trigger: 0,
+            thumb_lx: 100,   // inside deadzone
+            thumb_ly: -7000, // inside deadzone
+            thumb_rx: 7849,  // boundary: kept
+            thumb_ry: -7850, // just outside: kept
+        };
+        let state = ControllerState::from_raw_packet(&raw);
+        assert_eq!(state.buttons, buttons::ALL);
+        assert_eq!(state.thumb_lx, 0);
+        assert_eq!(state.thumb_ly, 0);
+        assert_eq!(state.thumb_rx, 7849);
+        assert_eq!(state.thumb_ry, -7850);
     }
 }

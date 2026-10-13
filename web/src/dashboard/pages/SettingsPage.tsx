@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { HostInfo, ControllerSettings, DEFAULT_SETTINGS } from '../../protocol/types';
 
 interface SettingsPageProps {
@@ -43,10 +43,32 @@ export function SettingsPage({
   const [staleThreshold, setStaleThreshold] = useState(250);
   const [connectionMode, setConnectionMode] = useState<'wifi' | 'bluetooth'>('wifi');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
+
+  // P4: pick up external changes (e.g. phone SettingsModal editing the same
+  // ControllerSettings object) instead of freezing the first props value.
+  useEffect(() => {
+    setSettings(initialSettings);
+  }, [initialSettings]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 2500);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToastMessage(null), 2500);
+  };
+
+  // P4: pills are navigation (scroll to card), not a filter — every card
+  // stays mounted so no setting is ever hidden from search/DOM.
+  const scrollToCard = (id: string, category: typeof activeCategory) => {
+    setActiveCategory(category);
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const handleSettingChange = <K extends keyof ControllerSettings>(
@@ -127,11 +149,11 @@ export function SettingsPage({
         </div>
       </div>
 
-      {/* Category Pills Bar */}
+      {/* Category Pills Bar — navigation shortcuts (scroll to card) */}
       <div className="settings-categories-nav">
         <button
           className={`settings-cat-pill ${activeCategory === 'general' ? 'active' : ''}`}
-          onClick={() => setActiveCategory('general')}
+          onClick={() => scrollToCard('card-server', 'general')}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3" />
@@ -142,7 +164,7 @@ export function SettingsPage({
 
         <button
           className={`settings-cat-pill ${activeCategory === 'connection' ? 'active' : ''}`}
-          onClick={() => setActiveCategory('connection')}
+          onClick={() => scrollToCard('card-connection-mode', 'connection')}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M5 12.55a11 11 0 0 1 14.08 0" />
@@ -154,7 +176,7 @@ export function SettingsPage({
 
         <button
           className={`settings-cat-pill ${activeCategory === 'controller' ? 'active' : ''}`}
-          onClick={() => setActiveCategory('controller')}
+          onClick={() => scrollToCard('card-default-controller', 'controller')}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="2" y="6" width="20" height="12" rx="4" />
@@ -167,7 +189,8 @@ export function SettingsPage({
 
         <button
           className={`settings-cat-pill ${activeCategory === 'input' ? 'active' : ''}`}
-          onClick={() => setActiveCategory('input')}
+          onClick={() => scrollToCard('card-default-controller', 'input')}
+          title="Sensitivity and deadzone sliders live in Default Controller Settings"
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="4" y1="21" x2="4" y2="14" />
@@ -185,7 +208,7 @@ export function SettingsPage({
 
         <button
           className={`settings-cat-pill ${activeCategory === 'appearance' ? 'active' : ''}`}
-          onClick={() => setActiveCategory('appearance')}
+          onClick={() => scrollToCard('card-app', 'appearance')}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
@@ -197,7 +220,7 @@ export function SettingsPage({
 
         <button
           className={`settings-cat-pill ${activeCategory === 'advanced' ? 'active' : ''}`}
-          onClick={() => setActiveCategory('advanced')}
+          onClick={() => scrollToCard('card-driver', 'advanced')}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
@@ -210,8 +233,8 @@ export function SettingsPage({
       <div className="settings-grid-3col">
         {/* ================= COLUMN 1 ================= */}
         <div className="settings-col">
-          {/* Card: Server Settings */}
-          <div className="settings-card">
+          {/* Card: Server Settings (dashboard-local display; host uses --port/POCKETPAD_PORT) */}
+          <div className="settings-card" id="card-server">
             <div className="settings-card-head">
               <div className="settings-card-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -231,7 +254,7 @@ export function SettingsPage({
               <div className="settings-field-row">
                 <div className="settings-field-info">
                   <span className="settings-field-label">Server Port</span>
-                  <span className="settings-field-sub">Port for web UI and controller connections.</span>
+                  <span className="settings-field-sub">Port for web UI and controller connections. Display only — restart the host with --port N or POCKETPAD_PORT=N to change it.</span>
                 </div>
                 <div className="settings-field-control">
                   <input
@@ -299,7 +322,7 @@ export function SettingsPage({
           </div>
 
           {/* Card: Default Controller Settings */}
-          <div className="settings-card">
+          <div className="settings-card" id="card-default-controller">
             <div className="settings-card-head">
               <div className="settings-card-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -316,7 +339,7 @@ export function SettingsPage({
             <div className="settings-field-group">
               <div className="settings-field-row">
                 <div className="settings-field-info">
-                  <span className="settings-field-label">Control Layout</span>
+                  <span className="settings-field-label">Control Layout (local preview only)</span>
                 </div>
                 <div className="settings-field-control">
                   <select
@@ -369,7 +392,26 @@ export function SettingsPage({
 
               <div className="settings-field-row settings-field-slider-row">
                 <div className="settings-field-info">
-                  <span className="settings-field-label">Trigger Sensitivity</span>
+                  <span className="settings-field-label">Control Scale</span>
+                  <span className="settings-field-sub">Scales the phone gamepad layout for small screens.</span>
+                </div>
+                <div className="settings-slider-wrap">
+                  <input
+                    type="range"
+                    className="settings-range"
+                    min="0.8"
+                    max="1.2"
+                    step="0.05"
+                    value={settings.controlScale}
+                    onInput={(e) => handleSettingChange('controlScale', parseFloat((e.target as HTMLInputElement).value))}
+                  />
+                  <span className="settings-slider-value">{settings.controlScale.toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div className="settings-field-row settings-field-slider-row">
+                <div className="settings-field-info">
+                  <span className="settings-field-label">Trigger Sensitivity (local preview only)</span>
                 </div>
                 <div className="settings-slider-wrap">
                   <input
@@ -387,7 +429,7 @@ export function SettingsPage({
 
               <div className="settings-field-row">
                 <div className="settings-field-info">
-                  <span className="settings-field-label">Swap A / B Buttons</span>
+                  <span className="settings-field-label">Swap A / B Buttons (local preview only)</span>
                 </div>
                 <div className="settings-field-control">
                   <label className="settings-toggle">
@@ -439,7 +481,7 @@ export function SettingsPage({
         {/* ================= COLUMN 2 ================= */}
         <div className="settings-col">
           {/* Card: Connection Mode */}
-          <div className="settings-card">
+          <div className="settings-card" id="card-connection-mode">
             <div className="settings-card-head">
               <div className="settings-card-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -504,7 +546,7 @@ export function SettingsPage({
           </div>
 
           {/* Card: Vibration & Haptics */}
-          <div className="settings-card">
+          <div className="settings-card" id="card-haptics">
             <div className="settings-card-head">
               <div className="settings-card-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -586,7 +628,7 @@ export function SettingsPage({
           </div>
 
           {/* Card: Data & Privacy */}
-          <div className="settings-card">
+          <div className="settings-card" id="card-data">
             <div className="settings-card-head">
               <div className="settings-card-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -638,7 +680,7 @@ export function SettingsPage({
         {/* ================= COLUMN 3 ================= */}
         <div className="settings-col">
           {/* Card: App Settings */}
-          <div className="settings-card">
+          <div className="settings-card" id="card-app">
             <div className="settings-card-head">
               <div className="settings-card-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -755,8 +797,8 @@ export function SettingsPage({
             </div>
           </div>
 
-          {/* Card: Network Settings */}
-          <div className="settings-card">
+          {/* Card: Network Settings (display-only in this build; thresholds live in the host watchdog) */}
+          <div className="settings-card" id="card-network">
             <div className="settings-card-head">
               <div className="settings-card-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -857,7 +899,7 @@ export function SettingsPage({
           </div>
 
           {/* Card: Driver Status (ViGEmBus) */}
-          <div className="settings-card">
+          <div className="settings-card" id="card-driver">
             <div className="settings-card-head">
               <div className="settings-card-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

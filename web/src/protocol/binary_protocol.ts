@@ -64,6 +64,30 @@ export class BinaryProtocolEncoder {
   }
 
   /**
+   * Encodes a 7-byte pong reply (echoes the ping timestamp).
+   */
+  public static encodePong(timestampMs: number): ArrayBuffer {
+    const buf = new ArrayBuffer(7);
+    const v = new DataView(buf);
+    v.setUint8(0, PROTOCOL_MAGIC);
+    v.setUint8(1, PROTOCOL_VERSION);
+    v.setUint8(2, PACKET_TYPE.PONG);
+    v.setUint32(3, timestampMs >>> 0, true);
+    return buf;
+  }
+
+  /**
+   * Parses a ping timestamp (server → client keepalive).
+   */
+  public static decodePing(data: ArrayBuffer): number | null {
+    if (data.byteLength !== 7) return null;
+    const v = new DataView(data);
+    if (v.getUint8(0) !== PROTOCOL_MAGIC || v.getUint8(1) !== PROTOCOL_VERSION) return null;
+    if (v.getUint8(2) !== PACKET_TYPE.PING) return null;
+    return v.getUint32(3, true);
+  }
+
+  /**
    * Parses pong timestamp
    */
   public static decodePong(data: ArrayBuffer): number | null {

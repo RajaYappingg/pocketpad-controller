@@ -41,14 +41,23 @@ impl std::fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::TooShort { expected, actual } => {
-                write!(f, "Packet too short: expected {expected} bytes, got {actual}")
+                write!(
+                    f,
+                    "Packet too short: expected {expected} bytes, got {actual}"
+                )
             }
             Self::UnexpectedLength { expected, actual } => {
-                write!(f, "Invalid packet length: expected {expected} bytes, got {actual}")
+                write!(
+                    f,
+                    "Invalid packet length: expected {expected} bytes, got {actual}"
+                )
             }
             Self::InvalidMagic(m) => write!(f, "Invalid protocol magic: 0x{m:02x} (expected 0x50)"),
             Self::UnsupportedVersion(v) => {
-                write!(f, "Unsupported protocol version: {v} (expected {PROTOCOL_VERSION})")
+                write!(
+                    f,
+                    "Unsupported protocol version: {v} (expected {PROTOCOL_VERSION})"
+                )
             }
             Self::UnknownPacketType(t) => write!(f, "Unknown packet type: 0x{t:02x}"),
         }
@@ -169,6 +178,20 @@ impl Protocol {
         }
     }
 
+    /// Encodes a ping packet into a 7-byte buffer (server keepalive).
+    pub fn encode_ping(timestamp: u32) -> [u8; 7] {
+        let ts_bytes = timestamp.to_le_bytes();
+        [
+            PROTOCOL_MAGIC,
+            PROTOCOL_VERSION,
+            PACKET_TYPE_PING,
+            ts_bytes[0],
+            ts_bytes[1],
+            ts_bytes[2],
+            ts_bytes[3],
+        ]
+    }
+
     /// Encodes a pong response packet into a 7-byte buffer
     pub fn encode_pong(timestamp: u32) -> [u8; 7] {
         let ts_bytes = timestamp.to_le_bytes();
@@ -241,7 +264,10 @@ mod tests {
             PROTOCOL_MAGIC,
             PROTOCOL_VERSION,
             PACKET_TYPE_PING,
-            0xef, 0xbe, 0xad, 0xde, // 0xdeadbeef
+            0xef,
+            0xbe,
+            0xad,
+            0xde, // 0xdeadbeef
         ];
         let packet = Protocol::decode(&ping_buf).unwrap();
         assert_eq!(packet, Packet::Ping(0xdeadbeef));
@@ -249,6 +275,14 @@ mod tests {
         let pong_bytes = Protocol::encode_pong(0xdeadbeef);
         let decoded_pong = Protocol::decode(&pong_bytes).unwrap();
         assert_eq!(decoded_pong, Packet::Pong(0xdeadbeef));
+    }
+
+    #[test]
+    fn test_encode_ping_round_trip() {
+        let ping_bytes = Protocol::encode_ping(123456);
+        assert_eq!(ping_bytes.len(), 7);
+        let decoded = Protocol::decode(&ping_bytes).unwrap();
+        assert_eq!(decoded, Packet::Ping(123456));
     }
 
     #[test]
@@ -276,7 +310,10 @@ mod tests {
         let short_input = [PROTOCOL_MAGIC, PROTOCOL_VERSION, PACKET_TYPE_INPUT, 1, 2, 3];
         assert!(matches!(
             Protocol::decode(&short_input),
-            Err(ProtocolError::TooShort { expected: 19, actual: 6 })
+            Err(ProtocolError::TooShort {
+                expected: 19,
+                actual: 6
+            })
         ));
     }
 
@@ -306,7 +343,10 @@ mod tests {
         input[2] = PACKET_TYPE_INPUT;
         assert!(matches!(
             Protocol::decode(&input),
-            Err(ProtocolError::UnexpectedLength { expected: 19, actual: 20 })
+            Err(ProtocolError::UnexpectedLength {
+                expected: 19,
+                actual: 20
+            })
         ));
     }
 }

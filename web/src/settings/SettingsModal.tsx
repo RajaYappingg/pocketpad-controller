@@ -19,11 +19,11 @@ export function SettingsModal({ settings, onUpdate, onClose, onDisconnect }: Set
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose} role="dialog" aria-modal="true" aria-label="Controller settings">
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">Controller Settings</h2>
-          <button className="btn btn-secondary" style={{ padding: '4px 10px' }} onClick={onClose}>
+          <button className="btn btn-secondary" style={{ padding: '4px 10px' }} onClick={onClose} aria-label="Close settings">
             ✕
           </button>
         </div>
@@ -125,6 +125,23 @@ export function SettingsModal({ settings, onUpdate, onClose, onDisconnect }: Set
               <option value="analog">Analog Drag</option>
               <option value="hair">Instant Hair Trigger</option>
             </select>
+          </div>
+        </div>
+
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">Control Scale</div>
+            <div className="setting-desc">Layout size for small screens ({settings.controlScale.toFixed(2)}x)</div>
+          </div>
+          <div className="setting-ctrl">
+            <input
+              type="range"
+              min="0.8"
+              max="1.2"
+              step="0.05"
+              value={settings.controlScale}
+              onInput={(e) => update('controlScale', parseFloat((e.target as HTMLInputElement).value))}
+            />
           </div>
         </div>
 
