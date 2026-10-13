@@ -17,6 +17,7 @@ export function App() {
   const [sessionToken, setSessionToken] = useState<string | null>(() => {
     return localStorage.getItem(TOKEN_KEY);
   });
+  const [playerSlot, setPlayerSlot] = useState<number | null>(null);
   const [showPairingModal, setShowPairingModal] = useState(false);
   const [pairingInputDraft, setPairingInputDraft] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -168,6 +169,7 @@ export function App() {
 
     const connect = () => {
       if (isDisposed) return;
+      let hasOpened = false;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const tokenToUse = sessionTokenRef.current;
       const codeToUse = pairingCodeInput.trim();
@@ -188,6 +190,7 @@ export function App() {
         wsRef.current = ws;
 
         ws.onopen = () => {
+          hasOpened = true;
           setIsConnected(true);
           setAuthError(null);
           setShowPairingModal(false);
@@ -225,11 +228,23 @@ export function App() {
                 setAuthError(null);
                 setShowPairingModal(false);
               }
+              if (typeof msg.slot === 'number') {
+                setPlayerSlot(msg.slot);
+              }
+              if (msg.disconnected) {
+                sessionTokenRef.current = null;
+                setSessionToken(null);
+                setPlayerSlot(null);
+                localStorage.removeItem(TOKEN_KEY);
+                setAuthError('Session ended by host.');
+                setShowPairingModal(true);
+              }
               if (msg.error) {
                 setAuthError(msg.error);
                 // Purge invalid token and request code
                 sessionTokenRef.current = null;
                 setSessionToken(null);
+                setPlayerSlot(null);
                 localStorage.removeItem(TOKEN_KEY);
                 setShowPairingModal(true);
               }
@@ -243,6 +258,23 @@ export function App() {
           setIsConnected(false);
           setPingMs(-1);
           if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+
+          if (!hasOpened) {
+            // Handshake failed before connection could be established
+            if (tokenToUse) {
+              sessionTokenRef.current = null;
+              setSessionToken(null);
+              setPlayerSlot(null);
+              localStorage.removeItem(TOKEN_KEY);
+              setShowPairingModal(true);
+              return;
+            } else if (codeToUse) {
+              setAuthError('Pairing code incorrect or expired. Please check PC screen.');
+              setShowPairingModal(true);
+              return;
+            }
+          }
+
           if (!isDisposed && !authError) {
             reconnectTimer = window.setTimeout(connect, 2000);
           }
@@ -271,9 +303,10 @@ export function App() {
     };
   }, [mode, pairingCodeInput, sessionToken, authError]);
 
-  const handleDisconnectClient = async () => {
+  const handleDisconnectClient = async (slot?: number) => {
     try {
-      await fetch('/api/disconnect', { method: 'POST' });
+      const url = slot !== undefined ? `/api/disconnect?slot=${slot}` : '/api/disconnect';
+      await fetch(url, { method: 'POST' });
     } catch {
       // ignore
     }
@@ -283,6 +316,7 @@ export function App() {
     if (wsRef.current) {
       wsRef.current.close();
     }
+    setPlayerSlot(null);
     setMode('dashboard');
   };
 
@@ -293,6 +327,7 @@ export function App() {
       localStorage.setItem(CODE_KEY, clean);
       setSessionToken(null);
       sessionTokenRef.current = null;
+      setPlayerSlot(null);
       localStorage.removeItem(TOKEN_KEY);
       setAuthError(null);
       setShowPairingModal(false);
@@ -384,6 +419,7 @@ export function App() {
           isConnected={isConnected}
           pingMs={pingMs}
           settings={settings}
+          playerSlot={playerSlot}
           onUpdateSettings={handleUpdateSettings}
           onDisconnectRequest={handleDisconnectFromPhone}
         />

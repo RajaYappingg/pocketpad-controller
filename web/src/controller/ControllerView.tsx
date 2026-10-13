@@ -10,6 +10,7 @@ interface ControllerViewProps {
   isConnected: boolean;
   pingMs: number;
   settings: ControllerSettings;
+  playerSlot?: number | null;
   onUpdateSettings: (s: ControllerSettings) => void;
   onDisconnectRequest: () => void;
 }
@@ -19,6 +20,7 @@ export function ControllerView({
   isConnected,
   pingMs,
   settings,
+  playerSlot,
   onUpdateSettings,
   onDisconnectRequest,
 }: ControllerViewProps) {
@@ -352,7 +354,13 @@ export function ControllerView({
             className="dot"
             style={{ color: isConnected ? 'var(--accent-green)' : 'var(--accent-red)' }}
           />
-          <span>{isConnected ? 'Connected' : 'Reconnecting...'}</span>
+          <span>
+            {isConnected
+              ? playerSlot !== null && playerSlot !== undefined
+                ? `P${playerSlot + 1} Connected`
+                : 'Connected'
+              : 'Reconnecting...'}
+          </span>
           {isConnected && pingMs >= 0 && (
             <span style={{ color: 'var(--text-dim)', marginLeft: '6px' }}>{pingMs}ms</span>
           )}

@@ -859,3 +859,89 @@ html, body {
   border-color: var(--accent-red);
   box-shadow: 0 0 12px var(--accent-red-glow);
 }
+
+/* Controller Slots Grid & Cards */
+.slots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.slot-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.slot-card-active {
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.04);
+}
+
+.slot-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.slot-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.slot-index-badge {
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--accent-red);
+}
+
+.slot-card-active .slot-index-badge {
+  border-color: rgba(34, 197, 94, 0.5);
+  color: var(--accent-green);
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.slot-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.slot-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.slot-stat-label {
+  color: var(--text-muted);
+}
+
+.slot-stat-value {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text-main);
+}
+
+.slot-disconnect-btn {
+  margin-top: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  width: 100%;
+}
+

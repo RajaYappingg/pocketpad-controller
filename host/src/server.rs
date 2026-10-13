@@ -12,14 +12,14 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
 use crate::controller_state::ControllerState;
-use crate::diagnostics::Diagnostics;
+use crate::diagnostics::{Diagnostics, SlotDiagnosticsSnapshot};
 use crate::network::NetworkUtils;
 use crate::pairing::PairingManager;
 use crate::protocol::{Packet, Protocol};
@@ -32,23 +32,30 @@ struct WebAssets;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub controllers: Arc<Mutex<Vec<ControllerSlot>>>,
+    pub controllers: Arc<Vec<Mutex<ControllerSlot>>>,
     pub driver_status: DriverStatus,
     pub pairing: PairingManager,
     pub diagnostics: Diagnostics,
     pub port: u16,
-    pub disconnect_notify: Arc<broadcast::Sender<()>>,
+    pub disconnect_notify: Arc<broadcast::Sender<Option<usize>>>,
 }
 
 pub struct ControllerSlot {
     pub controller: Box<dyn VirtualController>,
     pub session_id: Option<u64>,
+    pub client_ip: Option<String>,
+    pub session_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct WsAuthQuery {
     pub code: Option<String>,
     pub token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DisconnectQuery {
+    pub slot: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,6 +77,7 @@ pub struct StatusResponse {
     pub packets_received: u64,
     pub rtt_ms: Option<u32>,
     pub uptime_secs: u64,
+    pub slots: Vec<SlotDiagnosticsSnapshot>,
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -112,10 +120,8 @@ async fn static_file_handler(uri: axum::http::Uri) -> impl IntoResponse {
 /// Status API for desktop dashboard
 async fn api_status(State(state): State<AppState>) -> Json<StatusResponse> {
     let snap = state.diagnostics.snapshot();
-    let slots = state.controllers.lock().unwrap();
-    let active_clients = slots.iter().filter(|slot| slot.session_id.is_some()).count();
-    let controller_slots = slots.len();
-    drop(slots);
+    let controller_slots = state.controllers.len();
+    let active_clients = snap.slots.iter().filter(|s| s.connected).count();
     let code = state.pairing.get_pairing_code();
     let local_ip = NetworkUtils::get_primary_local_ip().to_string();
     let server_url = format!("http://{local_ip}:{}", state.port);
@@ -145,21 +151,45 @@ async fn api_status(State(state): State<AppState>) -> Json<StatusResponse> {
         packets_received: snap.packets_received,
         rtt_ms: snap.current_rtt_ms,
         uptime_secs: snap.uptime_secs,
+        slots: snap.slots,
     })
 }
 
 /// Safe disconnect endpoint from dashboard
-async fn api_disconnect(State(state): State<AppState>) -> impl IntoResponse {
-    let _ = state.disconnect_notify.send(());
-    let mut slots = state.controllers.lock().unwrap();
-    for slot in slots.iter_mut() {
-        if let Err(error) = slot.controller.reset_neutral() {
-            warn!("Failed to reset controller during dashboard disconnect: {error}");
+async fn api_disconnect(
+    Query(query): Query<DisconnectQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let target_slot = query.slot;
+    let _ = state.disconnect_notify.send(target_slot);
+
+    match target_slot {
+        Some(idx) if idx < state.controllers.len() => {
+            let mut slot = state.controllers[idx].lock().unwrap();
+            if let Err(error) = slot.controller.reset_neutral() {
+                warn!("Failed to reset controller slot {idx} during disconnect: {error}");
+            }
+            slot.session_id = None;
+            slot.client_ip = None;
+            slot.session_token = None;
+            state.diagnostics.set_slot_client(idx, None);
+            info!("Controller slot {idx} disconnected via dashboard API");
         }
-        slot.session_id = None;
+        _ => {
+            for (idx, slot_mutex) in state.controllers.iter().enumerate() {
+                let mut slot = slot_mutex.lock().unwrap();
+                if let Err(error) = slot.controller.reset_neutral() {
+                    warn!("Failed to reset controller slot {idx} during disconnect: {error}");
+                }
+                slot.session_id = None;
+                slot.client_ip = None;
+                slot.session_token = None;
+                state.diagnostics.set_slot_client(idx, None);
+            }
+            info!("All phone sessions disconnected via dashboard API");
+        }
     }
-    state.diagnostics.set_client_connected(None);
-    info!("All phone sessions disconnected via dashboard API");
+
     StatusCode::OK
 }
 
@@ -186,7 +216,7 @@ async fn ws_handler(
     };
 
     let Some(session_token) = session_token else {
-        warn!("Rejected unauthenticated WebSocket connection attempt");
+        warn!("Rejected unauthenticated WebSocket connection attempt from {remote_ip}");
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "Invalid pairing code or expired token" })),
@@ -194,21 +224,53 @@ async fn ws_handler(
             .into_response();
     };
 
-    let mut slots = state.controllers.lock().unwrap();
-    let Some((slot_index, slot)) = slots
-        .iter_mut()
-        .enumerate()
-        .find(|(_, slot)| slot.session_id.is_none())
-    else {
-        return (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": "All four controller slots are in use" })),
-        )
-            .into_response();
+    // 1. Check if this client already owns a slot (reconnecting by token)
+    let mut assigned_slot_index = None;
+    for (idx, slot_mutex) in state.controllers.iter().enumerate() {
+        let slot = slot_mutex.lock().unwrap();
+        if slot.session_token.as_deref() == Some(&session_token) {
+            assigned_slot_index = Some(idx);
+            break;
+        }
+    }
+
+    // 2. If reconnecting to an existing slot, notify existing socket to close immediately
+    if let Some(idx) = assigned_slot_index {
+        let _ = state.disconnect_notify.send(Some(idx));
+    }
+
+    // 3. If not reconnecting to an existing slot, find first empty slot
+    let slot_index = match assigned_slot_index {
+        Some(idx) => idx,
+        None => {
+            let mut free_index = None;
+            for (idx, slot_mutex) in state.controllers.iter().enumerate() {
+                let slot = slot_mutex.lock().unwrap();
+                if slot.session_id.is_none() {
+                    free_index = Some(idx);
+                    break;
+                }
+            }
+            match free_index {
+                Some(idx) => idx,
+                None => {
+                    return (
+                        StatusCode::CONFLICT,
+                        Json(serde_json::json!({ "error": "All four controller slots are in use" })),
+                    )
+                        .into_response();
+                }
+            }
+        }
     };
+
     let session_id = rand::random::<u64>();
-    slot.session_id = Some(session_id);
-    drop(slots);
+    {
+        let mut slot = state.controllers[slot_index].lock().unwrap();
+        slot.session_id = Some(session_id);
+        slot.client_ip = Some(remote_ip.clone());
+        slot.session_token = Some(session_token.clone());
+    }
 
     ws.on_upgrade(move |socket| {
         handle_controller_socket(
@@ -231,24 +293,31 @@ async fn handle_controller_socket(
     client_ip: String,
     session_token: String,
 ) {
-    info!("Phone controller connected from {client_ip}");
-    state.diagnostics.set_client_connected(Some(client_ip.clone()));
+    info!("Phone controller connected for slot {slot_index} from {client_ip}");
+    state.diagnostics.set_slot_client(slot_index, Some(client_ip.clone()));
 
     // Reset controller to neutral on connect
     {
-        let mut slots = state.controllers.lock().unwrap();
-        if let Err(error) = slots[slot_index].controller.reset_neutral() {
+        let mut slot = state.controllers[slot_index].lock().unwrap();
+        if let Err(error) = slot.controller.reset_neutral() {
             warn!("Failed to reset controller slot {slot_index} on connect: {error}");
         }
     }
     if socket
         .send(Message::Text(
-            serde_json::json!({ "authenticated": true, "token": session_token }).to_string(),
+            serde_json::json!({
+                "authenticated": true,
+                "token": session_token,
+                "slot": slot_index
+            })
+            .to_string(),
         ))
         .await
         .is_err()
     {
-        cleanup_controller_slot(&state, slot_index, session_id);
+        if cleanup_controller_slot(&state, slot_index, session_id) {
+            state.diagnostics.set_slot_client(slot_index, None);
+        }
         return;
     }
 
@@ -275,17 +344,21 @@ async fn handle_controller_socket(
                     };
                     match action {
                         WatchdogAction::ResetNeutral => {
-                            let mut slots = controllers_clone.lock().unwrap();
-                            if let Err(error) = slots[slot_index].controller.reset_neutral() {
-                                warn!("Failed to reset stale controller slot {slot_index}: {error}");
+                            let mut slot = controllers_clone[slot_index].lock().unwrap();
+                            if slot.session_id == Some(session_id) {
+                                if let Err(error) = slot.controller.reset_neutral() {
+                                    warn!("Failed to reset stale controller slot {slot_index}: {error}");
+                                }
+                                diag_clone.record_stale_reset();
                             }
-                            diag_clone.record_stale_reset();
                         }
                         WatchdogAction::DropSession => {
-                            warn!("Watchdog: connection timed out, dropping session");
-                            let mut slots = controllers_clone.lock().unwrap();
-                            if let Err(error) = slots[slot_index].controller.reset_neutral() {
-                                warn!("Failed to reset timed-out controller slot {slot_index}: {error}");
+                            warn!("Watchdog: connection timed out for slot {slot_index}, dropping session");
+                            let mut slot = controllers_clone[slot_index].lock().unwrap();
+                            if slot.session_id == Some(session_id) {
+                                if let Err(error) = slot.controller.reset_neutral() {
+                                    warn!("Failed to reset timed-out controller slot {slot_index}: {error}");
+                                }
                             }
                             let _ = drop_tx.send(());
                             break;
@@ -308,16 +381,23 @@ async fn handle_controller_socket(
                 let _ = socket.close().await;
                 break;
             }
-            _ = disconnect_rx.recv() => {
-                info!("Session disconnected via remote signal");
-                let _ = socket.send(Message::Text("{\"disconnected\":true}".to_string())).await;
-                let _ = socket.close().await;
-                break;
+            target = disconnect_rx.recv() => {
+                let should_disconnect = match target {
+                    Ok(None) => true,
+                    Ok(Some(idx)) => idx == slot_index,
+                    Err(_) => false,
+                };
+                if should_disconnect {
+                    info!("Session for slot {slot_index} disconnected via remote signal");
+                    let _ = socket.send(Message::Text("{\"disconnected\":true}".to_string())).await;
+                    let _ = socket.close().await;
+                    break;
+                }
             }
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Binary(bytes))) => {
-                        state.diagnostics.record_packet(bytes.len());
+                        state.diagnostics.record_slot_packet(slot_index, bytes.len());
                         match Protocol::decode(&bytes) {
                             Ok(Packet::Input(input)) => {
                                 if let Some(previous) = last_sequence {
@@ -330,12 +410,13 @@ async fn handle_controller_socket(
                                 last_sequence = Some(input.sequence);
                                 watchdog.lock().unwrap().on_input_received();
                                 let ctrl_state = ControllerState::from_raw_packet(&input);
-                                let mut slots = state.controllers.lock().unwrap();
-                                if slots[slot_index].session_id != Some(session_id) {
+
+                                let mut slot = state.controllers[slot_index].lock().unwrap();
+                                if slot.session_id != Some(session_id) {
                                     break;
                                 }
-                                if let Err(e) = slots[slot_index].controller.update(&ctrl_state) {
-                                    error!("Virtual controller update failed: {e}");
+                                if let Err(e) = slot.controller.update(&ctrl_state) {
+                                    error!("Virtual controller slot {slot_index} update failed: {e}");
                                 }
                             }
                             Ok(Packet::Ping(timestamp)) => {
@@ -353,16 +434,16 @@ async fn handle_controller_socket(
                     Some(Ok(Message::Text(text))) => {
                         if let Ok(message) = serde_json::from_str::<serde_json::Value>(&text) {
                             if let Some(rtt_ms) = message.get("rttMs").and_then(|value| value.as_u64()) {
-                                state.diagnostics.record_rtt(rtt_ms.min(u32::MAX as u64) as u32);
+                                state.diagnostics.record_slot_rtt(slot_index, rtt_ms.min(u32::MAX as u64) as u32);
                             }
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => {
-                        info!("Controller WebSocket closed by client");
+                        info!("Controller WebSocket for slot {slot_index} closed by client");
                         break;
                     }
                     Some(Err(e)) => {
-                        warn!("WebSocket error: {e}");
+                        warn!("WebSocket error on slot {slot_index}: {e}");
                         break;
                     }
                     _ => {}
@@ -376,25 +457,25 @@ async fn handle_controller_socket(
     let _ = watchdog_task.await;
 
     watchdog.lock().unwrap().on_session_end();
-    cleanup_controller_slot(&state, slot_index, session_id);
-    let has_active_session = state
-        .controllers
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|slot| slot.session_id.is_some());
-    if !has_active_session {
-        state.diagnostics.set_client_connected(None);
+    if cleanup_controller_slot(&state, slot_index, session_id) {
+        state.diagnostics.set_slot_client(slot_index, None);
+        info!("Controller session for slot {slot_index} cleaned up cleanly");
+    } else {
+        info!("Controller session for slot {slot_index} superseded by new session; preserved new slot state");
     }
-    info!("Controller session cleaned up cleanly");
 }
 
-fn cleanup_controller_slot(state: &AppState, slot_index: usize, session_id: u64) {
-    let mut slots = state.controllers.lock().unwrap();
-    if slots[slot_index].session_id == Some(session_id) {
-        if let Err(error) = slots[slot_index].controller.reset_neutral() {
+fn cleanup_controller_slot(state: &AppState, slot_index: usize, session_id: u64) -> bool {
+    let mut slot = state.controllers[slot_index].lock().unwrap();
+    if slot.session_id == Some(session_id) {
+        if let Err(error) = slot.controller.reset_neutral() {
             warn!("Failed to reset controller slot {slot_index} during cleanup: {error}");
         }
-        slots[slot_index].session_id = None;
+        slot.session_id = None;
+        slot.client_ip = None;
+        slot.session_token = None;
+        true
+    } else {
+        false
     }
 }

@@ -1,11 +1,11 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
-import { HostInfo } from '../protocol/types';
+import { HostInfo, SlotInfo } from '../protocol/types';
 import { QRCode } from '../components/qrcode';
 
 interface DashboardViewProps {
   hostInfo: HostInfo;
-  onDisconnectClient: () => void;
+  onDisconnectClient: (slot?: number) => void;
   onOpenMobileController: () => void;
 }
 
@@ -16,6 +16,15 @@ export function DashboardView({
 }: DashboardViewProps) {
   const [copied, setCopied] = useState(false);
   const [selectedIp, setSelectedIp] = useState<string>('');
+
+  const defaultSlots: SlotInfo[] = Array.from({ length: hostInfo.controllerSlots || 4 }, (_, i) => ({
+    slotIndex: i,
+    connected: i === 0 ? hostInfo.activeClientConnected : false,
+    clientIp: i === 0 ? hostInfo.activeClientIp : undefined,
+    rttMs: i === 0 ? hostInfo.rttMs : undefined,
+    packetsReceived: i === 0 ? hostInfo.packetsReceived : 0,
+  }));
+  const displaySlots = hostInfo.slots && hostInfo.slots.length > 0 ? hostInfo.slots : defaultSlots;
 
   const detectedHost = hostInfo.serverUrl.replace(/^https?:\/\//, '').split(':')[0] || '127.0.0.1';
   const currentIp = selectedIp || detectedHost;
@@ -232,11 +241,83 @@ export function DashboardView({
               <button
                 className="btn btn-danger"
                 style={{ width: '100%', marginTop: 'auto' }}
-                onClick={onDisconnectClient}
+                onClick={() => onDisconnectClient()}
               >
                 Disconnect Phone Session
               </button>
             )}
+          </div>
+        </div>
+
+        {/* Card: Controller Slots (Multiplayer / Diagnostics) */}
+        <div className="dash-card">
+          <div className="dash-card-header">
+            <h2 className="dash-card-title">
+              <span>🎮</span> Controller Slots ({hostInfo.activeClients || 0}/{hostInfo.controllerSlots || 4} Connected)
+            </h2>
+            {(hostInfo.activeClients || 0) > 0 && (
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: '11px', padding: '4px 10px' }}
+                onClick={() => onDisconnectClient()}
+                title="Disconnect all active controller sessions"
+              >
+                Disconnect All
+              </button>
+            )}
+          </div>
+
+          <div className="slots-grid">
+            {displaySlots.map((slot) => (
+              <div
+                key={slot.slotIndex}
+                className={`slot-card ${slot.connected ? 'slot-card-active' : ''}`}
+              >
+                <div className="slot-card-header">
+                  <div className="slot-title">
+                    <span className="slot-index-badge">P{slot.slotIndex + 1}</span>
+                    <span>Controller {slot.slotIndex + 1}</span>
+                  </div>
+                  {slot.connected ? (
+                    <span className="badge badge-ok" style={{ fontSize: '10px', padding: '2px 8px' }}>
+                      <span className="dot" /> Connected
+                    </span>
+                  ) : (
+                    <span className="badge badge-warn" style={{ fontSize: '10px', padding: '2px 8px', opacity: 0.7 }}>
+                      <span className="dot" /> Standby
+                    </span>
+                  )}
+                </div>
+
+                <div className="slot-card-body">
+                  <div className="slot-stat-row">
+                    <span className="slot-stat-label">Client IP</span>
+                    <span className="slot-stat-value">{slot.clientIp || '—'}</span>
+                  </div>
+                  <div className="slot-stat-row">
+                    <span className="slot-stat-label">Latency (RTT)</span>
+                    <span className="slot-stat-value">
+                      {slot.rttMs !== undefined && slot.rttMs !== null ? `${slot.rttMs} ms` : '—'}
+                    </span>
+                  </div>
+                  <div className="slot-stat-row">
+                    <span className="slot-stat-label">Packets</span>
+                    <span className="slot-stat-value">
+                      {(slot.packetsReceived || 0).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                {slot.connected && (
+                  <button
+                    className="btn btn-danger slot-disconnect-btn"
+                    onClick={() => onDisconnectClient(slot.slotIndex)}
+                  >
+                    Disconnect P{slot.slotIndex + 1}
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         </div>
 

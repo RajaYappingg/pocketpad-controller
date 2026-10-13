@@ -87,10 +87,12 @@ impl PairingManager {
 
     /// Verifies an existing session token
     pub fn verify_token(&self, token: &str, ip: &str) -> bool {
+        let is_loopback = |s: &str| s == "127.0.0.1" || s == "::1" || s == "::ffff:127.0.0.1";
         let state = self.inner.lock().unwrap();
         if let Some(session) = state.session_tokens.get(token) {
-            session.client_ip == ip
-                && Instant::now().duration_since(session.created_at) < state.token_ttl
+            let ip_matches =
+                session.client_ip == ip || (is_loopback(&session.client_ip) && is_loopback(ip));
+            ip_matches && Instant::now().duration_since(session.created_at) < state.token_ttl
         } else {
             false
         }

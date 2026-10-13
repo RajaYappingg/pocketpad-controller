@@ -27,15 +27,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Initialize Virtual Controller Backend & Detect ViGEmBus Driver
     const CONTROLLER_SLOTS: usize = 4;
     let (controllers, driver_status) = create_virtual_controllers(CONTROLLER_SLOTS);
-    let controllers = Arc::new(Mutex::new(
+    let controllers = Arc::new(
         controllers
             .into_iter()
-            .map(|controller| pocketpad_core::server::ControllerSlot {
-                controller,
-                session_id: None,
+            .map(|controller| {
+                Mutex::new(pocketpad_core::server::ControllerSlot {
+                    controller,
+                    session_id: None,
+                    client_ip: None,
+                    session_token: None,
+                })
             })
-            .collect(),
-    ));
+            .collect::<Vec<_>>(),
+    );
 
     match &driver_status {
         DriverStatus::Available { backend } => {
@@ -75,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pairing_cleanup_handle = pairing.clone();
     let pairing_code = pairing.get_pairing_code();
     let diagnostics = Diagnostics::new();
-    let (disconnect_tx, _) = broadcast::channel(16);
+    let (disconnect_tx, _) = broadcast::channel::<Option<usize>>(16);
 
     println!("------------------------------------------------------------");
     println!("  Desktop Dashboard : {dashboard_url}");
@@ -134,15 +138,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clean disconnect of virtual controller on shutdown
     {
-        let mut slots = controllers_shutdown.lock().unwrap();
-        for (slot_index, slot) in slots.iter_mut().enumerate() {
-            if let Err(error) = slot.controller.reset_neutral() {
-                error!("Failed to reset controller slot {slot_index} during shutdown: {error}");
+        for (slot_index, slot_mutex) in controllers_shutdown.iter().enumerate() {
+            if let Ok(mut slot) = slot_mutex.lock() {
+                if let Err(error) = slot.controller.reset_neutral() {
+                    error!("Failed to reset controller slot {slot_index} during shutdown: {error}");
+                }
+                if let Err(error) = slot.controller.disconnect() {
+                    error!("Failed to disconnect controller slot {slot_index}: {error}");
+                }
+                slot.session_id = None;
+                slot.client_ip = None;
+                slot.session_token = None;
             }
-            if let Err(error) = slot.controller.disconnect() {
-                error!("Failed to disconnect controller slot {slot_index}: {error}");
-            }
-            slot.session_id = None;
         }
     }
     println!("  [✓] Virtual device unplugged cleanly. Goodbye!");
