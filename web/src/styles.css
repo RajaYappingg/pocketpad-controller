@@ -945,3 +945,29 @@ html, body {
   width: 100%;
 }
 
+/* Closed Screen Overlay */
+.closed-screen-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-amoled);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 600;
+  padding: 16px;
+}
+
+.closed-screen-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-control);
+  border-radius: 12px;
+  padding: 28px 24px;
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+  text-align: center;
+}
+

@@ -391,7 +391,7 @@ export function ControllerView({
             className="ctrl-header-btn"
             style={{ color: 'var(--accent-red)' }}
             onClick={onDisconnectRequest}
-            title="Disconnect"
+            title="Close Controller"
           >
             ✕
           </button>
@@ -634,6 +634,7 @@ export function ControllerView({
           settings={settings}
           onUpdate={onUpdateSettings}
           onClose={() => setShowSettings(false)}
+          onDisconnect={onDisconnectRequest}
         />
       )}
     </div>

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pocketpad-v1';
+const CACHE_NAME = 'pocketpad-v3';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -40,6 +40,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Network-first for navigation requests so app updates are immediately applied
+  if (event.request.mode === 'navigate' || event.request.destination === 'document') {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, clone);
+            });
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Stale-while-revalidate for static assets
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const fetchPromise = fetch(event.request)
@@ -62,4 +81,3 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
-

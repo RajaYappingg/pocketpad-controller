@@ -9,7 +9,20 @@ const TOKEN_KEY = 'pocketpad_session_token';
 const CODE_KEY = 'pocketpad_pairing_code';
 
 export function App() {
-  const [mode, setMode] = useState<'dashboard' | 'controller'>('dashboard');
+  const isMobileDevice = typeof window !== 'undefined' && (
+    'ontouchstart' in window ||
+    navigator.maxTouchPoints > 0 ||
+    window.innerWidth <= 900
+  );
+
+  const [mode, setMode] = useState<'dashboard' | 'controller' | 'closed'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const modeParam = params.get('mode');
+    if (modeParam === 'controller' || (modeParam !== 'dashboard' && isMobileDevice)) {
+      return 'controller';
+    }
+    return 'dashboard';
+  });
   const [pairingCodeInput, setPairingCodeInput] = useState<string>(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('code') || localStorage.getItem(CODE_KEY) || '';
@@ -113,24 +126,14 @@ export function App() {
     }
   };
 
-  // Determine initial mode from query params or screen/touch
+  // Extract initial pairing code from URL query params
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const modeParam = params.get('mode');
     const codeParam = params.get('code');
 
     if (codeParam) {
       setPairingCodeInput(codeParam);
       localStorage.setItem(CODE_KEY, codeParam);
-    }
-
-    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    const isSmallScreen = window.innerWidth <= 900;
-
-    if (modeParam === 'controller' || (modeParam !== 'dashboard' && (isTouchDevice || isSmallScreen))) {
-      setMode('controller');
-    } else {
-      setMode('dashboard');
     }
   }, []);
 
@@ -397,9 +400,18 @@ export function App() {
     }
   };
 
+  const closeTab = () => {
+    try {
+      window.close();
+    } catch {
+      // ignore
+    }
+  };
+
   const handleDisconnectFromPhone = () => {
     if (wsRef.current) {
       wsRef.current.close();
+      wsRef.current = null;
     }
     if (rumbleIntervalRef.current) {
       clearInterval(rumbleIntervalRef.current);
@@ -410,8 +422,21 @@ export function App() {
     } catch {
       // ignore
     }
+    try {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+    } catch {
+      // ignore
+    }
     setPlayerSlot(null);
-    setMode('dashboard');
+    setIsConnected(false);
+
+    // Attempt to close tab immediately
+    closeTab();
+
+    // If browser blocks script from closing user tab, transition to closed screen (NEVER dashboard)
+    setMode('closed');
   };
 
   const handlePairingSubmit = (code: string) => {
@@ -427,6 +452,44 @@ export function App() {
       setShowPairingModal(false);
     }
   };
+
+  if (mode === 'closed') {
+    return (
+      <div className="closed-screen-overlay">
+        <div className="closed-screen-card">
+          <div style={{ fontSize: '44px', lineHeight: 1 }}>🎮</div>
+          <div>
+            <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#ffffff' }}>
+              Controller Disconnected
+            </h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: '1.4' }}>
+              Your controller session has ended. You can safely close this browser tab.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ flex: 1, padding: '10px', fontSize: '13px' }}
+              onClick={closeTab}
+            >
+              Close Tab
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ flex: 1, padding: '10px', fontSize: '13px' }}
+              onClick={() => {
+                setMode('controller');
+              }}
+            >
+              Reconnect
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (mode === 'controller') {
     return (
@@ -496,14 +559,16 @@ export function App() {
                 </button>
               </form>
 
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ fontSize: '12px' }}
-                onClick={() => setMode('dashboard')}
-              >
-                View Desktop Dashboard
-              </button>
+              {!('ontouchstart' in window || navigator.maxTouchPoints > 0) && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ fontSize: '12px' }}
+                  onClick={() => setMode('dashboard')}
+                >
+                  View Desktop Dashboard
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -517,6 +582,44 @@ export function App() {
           onUpdateSettings={handleUpdateSettings}
           onDisconnectRequest={handleDisconnectFromPhone}
         />
+      </div>
+    );
+  }
+
+  if (isMobileDevice && new URLSearchParams(window.location.search).get('mode') !== 'dashboard') {
+    return (
+      <div className="closed-screen-overlay">
+        <div className="closed-screen-card">
+          <div style={{ fontSize: '44px', lineHeight: 1 }}>🎮</div>
+          <div>
+            <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#ffffff' }}>
+              Controller Disconnected
+            </h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: '1.4' }}>
+              Your controller session has ended. You can safely close this browser tab.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ flex: 1, padding: '10px', fontSize: '13px' }}
+              onClick={closeTab}
+            >
+              Close Tab
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ flex: 1, padding: '10px', fontSize: '13px' }}
+              onClick={() => {
+                setMode('controller');
+              }}
+            >
+              Reconnect
+            </button>
+          </div>
+        </div>
       </div>
     );
   }

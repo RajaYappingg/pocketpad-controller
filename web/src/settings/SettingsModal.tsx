@@ -5,9 +5,10 @@ interface SettingsModalProps {
   settings: ControllerSettings;
   onUpdate: (newSettings: ControllerSettings) => void;
   onClose: () => void;
+  onDisconnect?: () => void;
 }
 
-export function SettingsModal({ settings, onUpdate, onClose }: SettingsModalProps) {
+export function SettingsModal({ settings, onUpdate, onClose, onDisconnect }: SettingsModalProps) {
   const update = <K extends keyof ControllerSettings>(key: K, val: ControllerSettings[K]) => {
     const updated = { ...settings, [key]: val };
     onUpdate(updated);
@@ -187,6 +188,22 @@ export function SettingsModal({ settings, onUpdate, onClose }: SettingsModalProp
             Done
           </button>
         </div>
+
+        {onDisconnect && (
+          <div style={{ marginTop: '14px', borderTop: '1px solid var(--border-control)', paddingTop: '12px' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ width: '100%', color: 'var(--accent-red)', borderColor: 'rgba(224, 36, 36, 0.4)' }}
+              onClick={() => {
+                onClose();
+                onDisconnect();
+              }}
+            >
+              ✕ Exit & Close Controller
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
