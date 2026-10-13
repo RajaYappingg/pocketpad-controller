@@ -1,0 +1,16 @@
+{
+  "name": "PocketPad Gamepad",
+  "short_name": "PocketPad",
+  "start_url": "/?mode=controller",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='128' fill='%23e02424'/><path d='M448 128H64c-23.5 0-42.7 19.2-42.7 42.7v170.7c0 23.5 19.2 42.7 42.7 42.7h384c23.5 0 42.7-19.2 42.7-42.7V170.7c0-23.5-19.2-42.7-42.7-42.7zm-213.3 149.3h-64v64h-42.7v-64h-64v-42.7h64v-64h42.7v64h64v42.7zm96 42.7c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zm85.3-64c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32z' fill='white'/></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}

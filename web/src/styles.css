@@ -1,0 +1,804 @@
+/* PocketPad - Lightweight Controller & Dashboard Styles */
+:root {
+  --bg-amoled: #000000;
+  --bg-surface: #0f1012;
+  --bg-control: #1a1b1e;
+  --bg-control-active: #2a2c32;
+  --border-control: #2b2e35;
+  --border-subtle: #1c1d22;
+  
+  --text-main: #f3f4f6;
+  --text-muted: #9ca3af;
+  --text-dim: #6b7280;
+  
+  --accent-red: #e02424;
+  --accent-red-hover: #f03e3e;
+  --accent-red-active: #b91c1c;
+  --accent-red-glow: rgba(224, 36, 36, 0.35);
+
+  --accent-green: #10b981;
+  --accent-yellow: #f59e0b;
+  --accent-blue: #3b82f6;
+
+  /* Button Xbox face colors (subtle text/glow, clean graphite body) */
+  --btn-a: #22c55e;
+  --btn-b: #ef4444;
+  --btn-x: #3b82f6;
+  --btn-y: #eab308;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-amoled);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ==========================================================================
+   DESKTOP DASHBOARD
+   ========================================================================== */
+.dashboard-container {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  touch-action: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.dashboard-wrapper {
+  width: 100%;
+  max-width: 960px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dash-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border-control);
+  padding-bottom: 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-logo {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent-red), #991b1b);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 12px var(--accent-red-glow);
+}
+
+.brand-logo svg {
+  width: 24px;
+  height: 24px;
+  fill: #ffffff;
+}
+
+.brand-text h1 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+}
+
+.brand-text p {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.badge {
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge-ok {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--accent-green);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.badge-warn {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--accent-yellow);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.badge-err {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--accent-red);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.grid-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 768px) {
+  .grid-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dash-card {
+  background-color: var(--bg-amoled);
+  border: 1px solid var(--border-control);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dash-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dash-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qr-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.qr-box {
+  background: #ffffff;
+  padding: 12px;
+  border-radius: 12px;
+  display: inline-block;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.qr-box svg {
+  display: block;
+}
+
+.pairing-code-badge {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: var(--accent-red);
+  background: rgba(224, 36, 36, 0.1);
+  padding: 6px 18px;
+  border-radius: 8px;
+  border: 1px dashed var(--accent-red);
+}
+
+.url-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-control);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-main);
+  width: 100%;
+}
+
+.info-table {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: collapse;
+}
+
+.info-table td {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.info-table td:first-child {
+  color: var(--text-muted);
+  width: 40%;
+}
+
+.info-table td:last-child {
+  font-weight: 500;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.btn-primary {
+  background: var(--accent-red);
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background: var(--accent-red-hover);
+}
+
+.btn-secondary {
+  background: var(--bg-control);
+  color: var(--text-main);
+  border-color: var(--border-control);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-control-active);
+}
+
+.btn-danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--accent-red);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.console-log {
+  background: #08090a;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  max-height: 140px;
+  overflow-y: auto;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.log-entry {
+  line-height: 1.4;
+}
+
+.log-time {
+  color: var(--text-dim);
+  margin-right: 6px;
+}
+
+/* ==========================================================================
+   PHONE CONTROLLER INTERFACE (AMOLED LANDSCAPE)
+   ========================================================================== */
+.controller-root {
+  width: 100vw;
+  height: 100vh;
+  background-color: var(--bg-amoled);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+}
+
+/* Rotate phone reminder if in portrait */
+.portrait-warning {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: #000000;
+  z-index: 1000;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  gap: 16px;
+}
+
+@media (orientation: portrait) {
+  .portrait-warning {
+    display: flex;
+  }
+}
+
+.portrait-warning svg {
+  width: 48px;
+  height: 48px;
+  fill: var(--accent-red);
+  animation: rotatePhone 2s infinite ease-in-out;
+}
+
+@keyframes rotatePhone {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(90deg); }
+}
+
+/* Controller Header (Status, Ping, Settings) */
+.ctrl-header {
+  height: 36px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 16px;
+  background: rgba(10, 10, 12, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 11px;
+  z-index: 50;
+}
+
+.ctrl-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.ctrl-header-center {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ctrl-header-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.ctrl-header-btn:active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Main Landscape Gamepad Grid */
+.ctrl-stage {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 180px 1fr;
+  padding: 8px 16px 14px 16px;
+  gap: 12px;
+  position: relative;
+}
+
+/* Left & Right Clusters */
+.ctrl-wing {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+  position: relative;
+}
+
+/* Shoulders bar on top of wings */
+.shoulder-cluster {
+  display: flex;
+  gap: 10px;
+  height: 48px;
+  width: 100%;
+}
+
+.btn-shoulder, .btn-trigger {
+  flex: 1;
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-trigger .trigger-meter {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--accent-red);
+  opacity: 0.35;
+  height: 0%;
+  pointer-events: none;
+  transition: height 0.04s ease-out;
+}
+
+.btn-shoulder:active, .btn-shoulder.active,
+.btn-trigger:active, .btn-trigger.active {
+  background: var(--bg-control-active);
+  border-color: var(--accent-red);
+  color: #ffffff;
+  box-shadow: 0 0 10px var(--accent-red-glow);
+}
+
+/* Lower clusters for Stick & Dpad/Buttons */
+.lower-cluster {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  justify-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+/* Joystick Widget */
+.joystick-zone {
+  width: 140px;
+  height: 140px;
+  background: radial-gradient(circle, #1a1b1f 0%, #101114 70%, #08090a 100%);
+  border: 2px solid var(--border-control);
+  border-radius: 50%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,0.8);
+}
+
+.joystick-thumb {
+  width: 58px;
+  height: 58px;
+  background: radial-gradient(circle at 35% 35%, #32353d 0%, #1c1d22 60%, #141518 100%);
+  border: 2px solid #40444f;
+  border-radius: 50%;
+  position: absolute;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.7);
+  will-change: transform;
+}
+
+.thumb-click-label {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+}
+
+.joystick-zone.clicked .joystick-thumb {
+  border-color: var(--accent-red);
+  box-shadow: 0 0 12px var(--accent-red-glow);
+}
+
+/* D-PAD cross */
+.dpad-container {
+  width: 140px;
+  height: 140px;
+  position: relative;
+  touch-action: none;
+}
+
+.dpad-btn {
+  position: absolute;
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.dpad-btn:active, .dpad-btn.active {
+  background: var(--bg-control-active);
+  border-color: var(--accent-red);
+  color: #ffffff;
+  box-shadow: 0 0 8px var(--accent-red-glow);
+}
+
+.dpad-up {
+  top: 0;
+  left: 46px;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px 8px 0 0;
+}
+
+.dpad-down {
+  bottom: 0;
+  left: 46px;
+  width: 48px;
+  height: 48px;
+  border-radius: 0 0 8px 8px;
+}
+
+.dpad-left {
+  top: 46px;
+  left: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px 0 0 8px;
+}
+
+.dpad-right {
+  top: 46px;
+  right: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 0 8px 8px 0;
+}
+
+.dpad-center-hub {
+  position: absolute;
+  top: 46px;
+  left: 46px;
+  width: 48px;
+  height: 48px;
+  background: var(--bg-control);
+  pointer-events: none;
+}
+
+/* Face buttons A, B, X, Y (diamond layout) */
+.face-diamond {
+  width: 140px;
+  height: 140px;
+  position: relative;
+  touch-action: none;
+}
+
+.btn-face {
+  position: absolute;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--bg-control);
+  border: 2px solid var(--border-control);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 800;
+  font-family: var(--font-sans);
+  touch-action: none;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6);
+}
+
+.btn-face.btn-a {
+  bottom: 0;
+  left: 47px;
+  color: var(--btn-a);
+}
+
+.btn-face.btn-b {
+  top: 47px;
+  right: 0;
+  color: var(--btn-b);
+}
+
+.btn-face.btn-x {
+  top: 47px;
+  left: 0;
+  color: var(--btn-x);
+}
+
+.btn-face.btn-y {
+  top: 0;
+  left: 47px;
+  color: var(--btn-y);
+}
+
+.btn-face:active, .btn-face.active {
+  background: var(--bg-control-active);
+  transform: scale(0.94);
+  box-shadow: 0 0 14px currentColor;
+  border-color: currentColor;
+}
+
+/* Center Cluster (Guide, Back, Start) */
+.ctrl-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-around;
+  padding: 10px 0;
+}
+
+.center-sys-row {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+.btn-sys {
+  background: var(--bg-control);
+  border: 1px solid var(--border-control);
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-sys:active, .btn-sys.active {
+  background: var(--bg-control-active);
+  border-color: var(--accent-red);
+  color: #ffffff;
+}
+
+.btn-guide {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #24252a 0%, #151619 100%);
+  border: 2px solid var(--border-control);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.8);
+}
+
+.btn-guide svg {
+  width: 26px;
+  height: 26px;
+  fill: #d1d5db;
+}
+
+.btn-guide:active, .btn-guide.active {
+  border-color: var(--accent-green);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.5);
+}
+
+.btn-guide:active svg, .btn-guide.active svg {
+  fill: var(--accent-green);
+}
+
+/* Modals & Dialogs */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 16px;
+  user-select: auto;
+  touch-action: auto;
+}
+
+.modal-content {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-control);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 12px;
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.setting-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.setting-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.setting-ctrl input[type="range"] {
+  width: 140px;
+  accent-color: var(--accent-red);
+}
+
+.setting-ctrl input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-red);
+}

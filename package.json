@@ -1,0 +1,11 @@
+{
+  "name": "pocketpad-root",
+  "private": true,
+  "scripts": {
+    "build:web": "pnpm --filter pocketpad-web build",
+    "dev:web": "pnpm --filter pocketpad-web dev",
+    "build": "powershell -ExecutionPolicy Bypass -File ./scripts/build.ps1",
+    "test": "powershell -ExecutionPolicy Bypass -File ./scripts/test.ps1",
+    "dev": "powershell -ExecutionPolicy Bypass -File ./scripts/run-dev.ps1"
+  }
+}

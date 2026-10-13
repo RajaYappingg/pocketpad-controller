@@ -1,0 +1,16 @@
+/target/
+/bin/
+**/*.rs.bk
+Cargo.lock
+
+# Node / Web
+node_modules/
+dist/
+.pnpm-store/
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
