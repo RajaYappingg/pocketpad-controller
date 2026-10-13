@@ -629,6 +629,8 @@ export function App() {
       hostInfo={hostInfo}
       onDisconnectClient={handleDisconnectClient}
       onOpenMobileController={() => setMode('controller')}
+      settings={settings}
+      onUpdateSettings={handleUpdateSettings}
     />
   );
 }

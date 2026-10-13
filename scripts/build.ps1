@@ -41,6 +41,7 @@ Write-Host "  [OK] Frontend built successfully into web/dist" -ForegroundColor G
 Write-Host "`n[2/3] Building Optimized Windows x64 Host..." -ForegroundColor Yellow
 Push-Location $RootDir
 try {
+    cargo clean -p pocketpad
     cargo build --release --bin pocketpad
 } finally {
     Pop-Location

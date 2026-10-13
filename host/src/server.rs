@@ -101,7 +101,14 @@ async fn static_file_handler(uri: axum::http::Uri) -> impl IntoResponse {
             let mime = mime_guess::from_path(&path).first_or_octet_stream();
             let mut headers = HeaderMap::new();
             headers.insert(header::CONTENT_TYPE, mime.as_ref().parse().unwrap());
-            headers.insert(header::CACHE_CONTROL, "public, max-age=3600".parse().unwrap());
+            let cache_control = if path == "index.html" || path == "sw.js" || path == "manifest.webmanifest" {
+                "no-cache, no-store, must-revalidate"
+            } else if path.starts_with("assets/") {
+                "public, max-age=31536000, immutable"
+            } else {
+                "public, max-age=3600"
+            };
+            headers.insert(header::CACHE_CONTROL, cache_control.parse().unwrap());
             (StatusCode::OK, headers, content.data).into_response()
         }
         None => {
@@ -109,6 +116,7 @@ async fn static_file_handler(uri: axum::http::Uri) -> impl IntoResponse {
             if let Some(index) = WebAssets::get("index.html") {
                 let mut headers = HeaderMap::new();
                 headers.insert(header::CONTENT_TYPE, "text/html; charset=utf-8".parse().unwrap());
+                headers.insert(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate".parse().unwrap());
                 (StatusCode::OK, headers, index.data).into_response()
             } else {
                 (StatusCode::NOT_FOUND, "Not Found").into_response()
