@@ -52,17 +52,31 @@ export const DEFAULT_SETTINGS: ControllerSettings = {
   hapticsEnabled: true,
 };
 
+export interface SlotInfo {
+  slotIndex: number;
+  connected: boolean;
+  clientIp?: string;
+  rttMs?: number;
+  packetsReceived: number;
+}
+
 export interface HostInfo {
   status: 'ok' | 'driver_missing' | 'error';
   driverInstalled: boolean;
   driverName: string;
   driverVersion?: string;
+  driverReason?: string;
+  helpUrl?: string;
   pairingCode: string;
   serverUrl: string;
   ipAddresses: string[];
   port: number;
   activeClientConnected: boolean;
   activeClientIp?: string;
+  activeClients: number;
+  controllerSlots: number;
   packetsReceived: number;
   rttMs?: number;
+  uptimeSecs?: number;
+  slots?: SlotInfo[];
 }

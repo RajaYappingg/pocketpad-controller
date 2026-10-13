@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Versions
+        run: |
+          node --version
+          pnpm --version
+          cargo --version
+          rustc --version
+
+      - name: Install web deps (frozen)
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check web
+        working-directory: web
+        run: pnpm exec tsc --noEmit
+
+      - name: Web protocol tests
+        working-directory: web
+        run: pnpm exec vitest run
+
+      - name: Build web
+        working-directory: web
+        run: pnpm build
+
+      - name: Rust tests
+        run: cargo test --locked --all-targets --verbose
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: rustfmt
+        run: cargo fmt --check
+
+      - name: Release build
+        run: cargo build --locked --release --bin pocketpad
+
+      - name: Hash + upload binary
+        shell: pwsh
+        run: |
+          $exe = "target/release/pocketpad.exe"
+          (Get-FileHash $exe -Algorithm SHA256).Hash | Out-File "$exe.sha256"
+          Get-Item $exe | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocketpad-windows-x64
+          path: |
+            target/release/pocketpad.exe
+            target/release/pocketpad.exe.sha256

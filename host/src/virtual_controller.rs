@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::controller_state::ControllerState;
 use std::fmt;
 use vigem_client::{Client, TargetId, XButtons, XGamepad, Xbox360Wired};
@@ -16,8 +14,12 @@ impl fmt::Display for ControllerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DriverNotInstalled(msg) => write!(f, "ViGEmBus driver error: {msg}"),
-            Self::PluginFailed(msg) => write!(f, "Failed to plug in virtual Xbox 360 controller: {msg}"),
-            Self::UpdateFailed(msg) => write!(f, "Failed to update virtual controller state: {msg}"),
+            Self::PluginFailed(msg) => {
+                write!(f, "Failed to plug in virtual Xbox 360 controller: {msg}")
+            }
+            Self::UpdateFailed(msg) => {
+                write!(f, "Failed to update virtual controller state: {msg}")
+            }
             Self::AlreadyDisconnected => write!(f, "Controller is already disconnected"),
         }
     }
@@ -27,8 +29,13 @@ impl std::error::Error for ControllerError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DriverStatus {
-    Available { backend: &'static str },
-    DriverMissing { reason: String, help_url: &'static str },
+    Available {
+        backend: &'static str,
+    },
+    DriverMissing {
+        reason: String,
+        help_url: &'static str,
+    },
 }
 
 pub trait VirtualController: Send + Sync {
@@ -46,12 +53,17 @@ pub trait VirtualController: Send + Sync {
 
     /// Returns the human-readable backend name
     fn backend_name(&self) -> &'static str;
+
+    /// Subscribes to rumble force feedback updates (large_motor, small_motor)
+    fn subscribe_rumble(&self) -> Option<tokio::sync::watch::Receiver<(u8, u8)>>;
 }
 
 /// Real Windows Xbox 360 Virtual Controller Backend using ViGEmBus
 pub struct ViGEmXbox360Backend {
     target: Xbox360Wired<Client>,
     plugged_in: bool,
+    rumble_rx: tokio::sync::watch::Receiver<(u8, u8)>,
+    _notification_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl ViGEmXbox360Backend {
@@ -61,15 +73,37 @@ impl ViGEmXbox360Backend {
             .plugin()
             .map_err(|e| ControllerError::PluginFailed(format!("{e:?}")))?;
 
-        let _ = target.wait_ready();
+        target
+            .wait_ready()
+            .map_err(|e| ControllerError::PluginFailed(format!("wait_ready: {e:?}")))?;
 
-        // Send initial neutral state
+        // Send initial neutral state; a failure here means the target is
+        // unusable — propagate instead of silently continuing.
         let neutral = XGamepad::default();
-        let _ = target.update(&neutral);
+        target
+            .update(&neutral)
+            .map_err(|e| ControllerError::PluginFailed(format!("initial update: {e:?}")))?;
+
+        // Register rumble force feedback notification listener
+        let (rumble_tx, rumble_rx) = tokio::sync::watch::channel::<(u8, u8)>((0, 0));
+        let notification_handle = match target.request_notification() {
+            Ok(req) => {
+                let handle = req.spawn_thread(move |_, notif| {
+                    let _ = rumble_tx.send((notif.large_motor, notif.small_motor));
+                });
+                Some(handle)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to register rumble notification handler: {e:?}");
+                None
+            }
+        };
 
         Ok(Self {
             target,
             plugged_in: true,
+            rumble_rx,
+            _notification_handle: notification_handle,
         })
     }
 }
@@ -102,8 +136,14 @@ impl VirtualController for ViGEmXbox360Backend {
 
     fn disconnect(&mut self) -> Result<(), ControllerError> {
         if self.plugged_in {
-            let _ = self.reset_neutral();
-            let _ = self.target.unplug();
+            // Best-effort neutral reset, but unplug errors propagate so
+            // callers (and shutdown logs) see a stuck device.
+            if let Err(e) = self.reset_neutral() {
+                tracing::warn!("Reset before unplug failed: {e}");
+            }
+            self.target
+                .unplug()
+                .map_err(|e| ControllerError::PluginFailed(format!("unplug: {e:?}")))?;
             self.plugged_in = false;
         }
         Ok(())
@@ -116,13 +156,26 @@ impl VirtualController for ViGEmXbox360Backend {
     fn backend_name(&self) -> &'static str {
         "ViGEmBus (Xbox 360)"
     }
+
+    fn subscribe_rumble(&self) -> Option<tokio::sync::watch::Receiver<(u8, u8)>> {
+        Some(self.rumble_rx.clone())
+    }
 }
 
 impl Drop for ViGEmXbox360Backend {
     fn drop(&mut self) {
         if self.plugged_in {
-            let _ = self.reset_neutral();
-            let _ = self.target.unplug();
+            // Drop cannot propagate: log instead of swallowing silently.
+            // Note: the rumble notification thread (spawned by
+            // request_notification().spawn_thread) owns a cloned sender and
+            // exits when the target is unplugged; the JoinHandle is kept
+            // alive here to keep the thread scoped to the backend lifetime.
+            if let Err(e) = self.reset_neutral() {
+                tracing::warn!("Reset during drop failed: {e}");
+            }
+            if let Err(e) = self.target.unplug() {
+                tracing::warn!("Unplug during drop failed: {e:?}");
+            }
             self.plugged_in = false;
         }
     }
@@ -133,15 +186,26 @@ pub struct MockVirtualController {
     pub last_state: ControllerState,
     pub is_plugged_in: bool,
     pub update_count: usize,
+    pub rumble_tx: tokio::sync::watch::Sender<(u8, u8)>,
+    pub rumble_rx: tokio::sync::watch::Receiver<(u8, u8)>,
 }
 
 impl MockVirtualController {
     pub fn new() -> Self {
+        let (rumble_tx, rumble_rx) = tokio::sync::watch::channel((0, 0));
         Self {
             last_state: ControllerState::neutral(),
             is_plugged_in: true,
             update_count: 0,
+            rumble_tx,
+            rumble_rx,
         }
+    }
+}
+
+impl Default for MockVirtualController {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -156,13 +220,20 @@ impl VirtualController for MockVirtualController {
     }
 
     fn reset_neutral(&mut self) -> Result<(), ControllerError> {
+        if !self.is_plugged_in {
+            return Err(ControllerError::AlreadyDisconnected);
+        }
         self.last_state = ControllerState::neutral();
         Ok(())
     }
 
     fn disconnect(&mut self) -> Result<(), ControllerError> {
+        if !self.is_plugged_in {
+            return Err(ControllerError::AlreadyDisconnected);
+        }
         self.is_plugged_in = false;
-        self.reset_neutral()
+        self.last_state = ControllerState::neutral();
+        Ok(())
     }
 
     fn is_connected(&self) -> bool {
@@ -171,6 +242,10 @@ impl VirtualController for MockVirtualController {
 
     fn backend_name(&self) -> &'static str {
         "Mock Controller (Unit Test / Offline)"
+    }
+
+    fn subscribe_rumble(&self) -> Option<tokio::sync::watch::Receiver<(u8, u8)>> {
+        Some(self.rumble_rx.clone())
     }
 }
 
@@ -210,6 +285,31 @@ pub fn create_virtual_controller() -> (Box<dyn VirtualController>, DriverStatus)
     }
 }
 
+/// Creates the requested number of independent controller targets.
+///
+/// Each target uses the Xbox 360 target identity; ViGEmBus assigns each
+/// plugged-in target its own virtual controller instance.
+pub fn create_virtual_controllers(count: usize) -> (Vec<Box<dyn VirtualController>>, DriverStatus) {
+    let mut controllers = Vec::with_capacity(count);
+    let mut status = None;
+
+    for _ in 0..count {
+        let (controller, controller_status) = create_virtual_controller();
+        if status.is_none() {
+            status = Some(controller_status.clone());
+        }
+        controllers.push(controller);
+    }
+
+    (
+        controllers,
+        status.unwrap_or(DriverStatus::DriverMissing {
+            reason: "No controller slots were configured.".to_string(),
+            help_url: "https://github.com/nefarius/ViGEmBus/releases",
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +337,8 @@ mod tests {
         ctrl.disconnect().unwrap();
         assert!(!ctrl.is_connected());
         assert!(ctrl.update(&st).is_err());
+        // Aligned with ViGEm backend: operations after disconnect fail.
+        assert!(ctrl.reset_neutral().is_err());
+        assert!(ctrl.disconnect().is_err());
     }
 }

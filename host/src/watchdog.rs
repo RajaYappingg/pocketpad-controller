@@ -37,6 +37,12 @@ impl Watchdog<SystemTimeProvider> {
     }
 }
 
+impl Default for Watchdog<SystemTimeProvider> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: TimeProvider> Watchdog<T> {
     pub fn with_time_provider(
         time_provider: T,

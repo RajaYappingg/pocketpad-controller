@@ -24,6 +24,11 @@ export function VirtualJoystick({
   const thumbRef = useRef<HTMLDivElement>(null);
   const activePointerId = useRef<number | null>(null);
   const centerPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const touchStartPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const touchStartTime = useRef<number>(0);
+  const startedOnThumb = useRef(false);
+  const moved = useRef(false);
+  const clickTimerRef = useRef<number | null>(null);
 
   // Store options in refs so pointer listeners always see current props without re-binding
   const optsRef = useRef({ deadzone, sensitivity, invertY, onMove, onClick });
@@ -39,7 +44,15 @@ export function VirtualJoystick({
     const handlePointerDown = (e: PointerEvent) => {
       if (activePointerId.current !== null) return;
       activePointerId.current = e.pointerId;
-      el.setPointerCapture(e.pointerId);
+      startedOnThumb.current = e.target instanceof Node && thumb.contains(e.target);
+      moved.current = false;
+      touchStartPos.current = { x: e.clientX, y: e.clientY };
+      touchStartTime.current = performance.now();
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        // Pointer gone or capture unsupported — drag tracking still works.
+      }
 
       const rect = el.getBoundingClientRect();
       centerPos.current = {
@@ -52,20 +65,46 @@ export function VirtualJoystick({
 
     const handlePointerMove = (e: PointerEvent) => {
       if (e.pointerId !== activePointerId.current) return;
+      const distFromStart = Math.hypot(
+        e.clientX - touchStartPos.current.x,
+        e.clientY - touchStartPos.current.y
+      );
+      if (distFromStart > 14) {
+        moved.current = true;
+      }
       updateStick(e.clientX, e.clientY);
     };
 
-    const resetStick = () => {
+    const resetStick = (wasClick = false) => {
       activePointerId.current = null;
       if (thumb) {
         thumb.style.transform = 'translate3d(0px, 0px, 0px)';
       }
       optsRef.current.onMove(0, 0);
+
+      const elapsed = performance.now() - touchStartTime.current;
+      const isQuickTap = wasClick && startedOnThumb.current && !moved.current && elapsed < 400;
+
+      if (isQuickTap) {
+        if (clickTimerRef.current !== null) {
+          clearTimeout(clickTimerRef.current);
+        }
+        optsRef.current.onClick(true);
+        el.classList.add('clicked');
+
+        clickTimerRef.current = window.setTimeout(() => {
+          optsRef.current.onClick(false);
+          el.classList.remove('clicked');
+          clickTimerRef.current = null;
+        }, 120);
+      }
+      startedOnThumb.current = false;
+      moved.current = false;
     };
 
     const handlePointerUp = (e: PointerEvent) => {
       if (e.pointerId !== activePointerId.current) return;
-      resetStick();
+      resetStick(true);
     };
 
     const handlePointerCancel = (e: PointerEvent) => {
@@ -120,6 +159,9 @@ export function VirtualJoystick({
     el.addEventListener('lostpointercapture', handlePointerCancel);
 
     return () => {
+      if (clickTimerRef.current !== null) {
+        clearTimeout(clickTimerRef.current);
+      }
       el.removeEventListener('pointerdown', handlePointerDown);
       el.removeEventListener('pointermove', handlePointerMove);
       el.removeEventListener('pointerup', handlePointerUp);
@@ -127,19 +169,6 @@ export function VirtualJoystick({
       el.removeEventListener('lostpointercapture', handlePointerCancel);
     };
   }, [size]);
-
-  // Click handler for stick-click (LS or RS)
-  const handleThumbClickDown = (e: MouseEvent | TouchEvent) => {
-    e.stopPropagation();
-    optsRef.current.onClick(true);
-    if (containerRef.current) containerRef.current.classList.add('clicked');
-  };
-
-  const handleThumbClickUp = (e: MouseEvent | TouchEvent) => {
-    e.stopPropagation();
-    optsRef.current.onClick(false);
-    if (containerRef.current) containerRef.current.classList.remove('clicked');
-  };
 
   return (
     <div
@@ -150,10 +179,6 @@ export function VirtualJoystick({
       <div
         ref={thumbRef}
         className="joystick-thumb"
-        onMouseDown={handleThumbClickDown}
-        onMouseUp={handleThumbClickUp}
-        onTouchStart={handleThumbClickDown}
-        onTouchEnd={handleThumbClickUp}
       >
         <span className="thumb-click-label">{label}</span>
       </div>
