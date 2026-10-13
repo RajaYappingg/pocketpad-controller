@@ -49,8 +49,60 @@ export function App() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const pingIntervalRef = useRef<number | null>(null);
+  const rumbleIntervalRef = useRef<number | null>(null);
   const sessionTokenRef = useRef<string | null>(sessionToken);
   sessionTokenRef.current = sessionToken;
+
+  const triggerRumble = (largeMotor: number, smallMotor: number) => {
+    if (!settings.hapticsEnabled || !('vibrate' in navigator)) return;
+
+    if (rumbleIntervalRef.current) {
+      clearInterval(rumbleIntervalRef.current);
+      rumbleIntervalRef.current = null;
+    }
+
+    if (largeMotor === 0 && smallMotor === 0) {
+      try {
+        navigator.vibrate(0);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    // Map Xbox 360 dual motor parameters to smartphone haptic pulses
+    let pulseDuration: number;
+    let cycleInterval: number;
+
+    if (largeMotor >= 128) {
+      // Heavy low-frequency motor (heavy impact, explosion, crash)
+      pulseDuration = Math.round(75 + (largeMotor / 255) * 45); // 75ms - 120ms
+      cycleInterval = 110;
+    } else if (largeMotor > 0) {
+      // Medium low-frequency motor (engine acceleration, rough road)
+      pulseDuration = Math.round(45 + (largeMotor / 128) * 30); // 45ms - 75ms
+      cycleInterval = 85;
+    } else {
+      // Light high-frequency motor (gunfire recoil, UI click, surface friction)
+      pulseDuration = Math.round(25 + (smallMotor / 255) * 25); // 25ms - 50ms
+      cycleInterval = 65;
+    }
+
+    try {
+      navigator.vibrate(pulseDuration);
+    } catch {
+      // ignore
+    }
+
+    // Keep pulsing continuously as long as game motors remain engaged
+    rumbleIntervalRef.current = window.setInterval(() => {
+      try {
+        navigator.vibrate(pulseDuration);
+      } catch {
+        // ignore
+      }
+    }, cycleInterval);
+  };
 
   const handleUpdateSettings = (newSettings: ControllerSettings) => {
     setSettings(newSettings);
@@ -131,6 +183,16 @@ export function App() {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         acquireLock();
+      } else {
+        if (rumbleIntervalRef.current) {
+          clearInterval(rumbleIntervalRef.current);
+          rumbleIntervalRef.current = null;
+        }
+        try {
+          if ('vibrate' in navigator) navigator.vibrate(0);
+        } catch {
+          // ignore
+        }
       }
     };
 
@@ -217,6 +279,11 @@ export function App() {
                 setPingMs(Math.max(0, rtt));
                 ws.send(JSON.stringify({ rttMs: Math.max(0, rtt) }));
               }
+            } else if (buf.byteLength >= 5) {
+              const rumble = BinaryProtocolEncoder.decodeRumble(buf);
+              if (rumble) {
+                triggerRumble(rumble.largeMotor, rumble.smallMotor);
+              }
             }
           } else if (typeof event.data === 'string') {
             try {
@@ -258,6 +325,15 @@ export function App() {
           setIsConnected(false);
           setPingMs(-1);
           if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+          if (rumbleIntervalRef.current) {
+            clearInterval(rumbleIntervalRef.current);
+            rumbleIntervalRef.current = null;
+          }
+          try {
+            if ('vibrate' in navigator) navigator.vibrate(0);
+          } catch {
+            // ignore
+          }
 
           if (!hasOpened) {
             // Handshake failed before connection could be established
@@ -296,6 +372,15 @@ export function App() {
       isDisposed = true;
       clearTimeout(reconnectTimer);
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+      if (rumbleIntervalRef.current) {
+        clearInterval(rumbleIntervalRef.current);
+        rumbleIntervalRef.current = null;
+      }
+      try {
+        if ('vibrate' in navigator) navigator.vibrate(0);
+      } catch {
+        // ignore
+      }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -315,6 +400,15 @@ export function App() {
   const handleDisconnectFromPhone = () => {
     if (wsRef.current) {
       wsRef.current.close();
+    }
+    if (rumbleIntervalRef.current) {
+      clearInterval(rumbleIntervalRef.current);
+      rumbleIntervalRef.current = null;
+    }
+    try {
+      if ('vibrate' in navigator) navigator.vibrate(0);
+    } catch {
+      // ignore
     }
     setPlayerSlot(null);
     setMode('dashboard');

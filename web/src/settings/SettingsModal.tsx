@@ -146,8 +146,8 @@ export function SettingsModal({ settings, onUpdate, onClose }: SettingsModalProp
 
         <div className="setting-row">
           <div>
-            <div className="setting-label">Haptic Vibration</div>
-            <div className="setting-desc">Touch tactile feedback on Android</div>
+            <div className="setting-label">Haptic Vibration & Game Rumble</div>
+            <div className="setting-desc">Tactile touch & in-game force feedback rumble</div>
           </div>
           <div className="setting-ctrl">
             <input
@@ -157,6 +157,27 @@ export function SettingsModal({ settings, onUpdate, onClose }: SettingsModalProp
             />
           </div>
         </div>
+
+        {settings.hapticsEnabled && (
+          <div style={{ margin: '4px 0 8px 0' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ fontSize: '12px', padding: '8px 14px', width: '100%', gap: '6px' }}
+              onClick={() => {
+                if ('vibrate' in navigator) {
+                  try {
+                    navigator.vibrate([70, 30, 110]);
+                  } catch {
+                    // ignore
+                  }
+                }
+              }}
+            >
+              📳 Test Game Rumble Pulse
+            </button>
+          </div>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
           <button className="btn btn-secondary" onClick={handleReset}>

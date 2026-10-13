@@ -197,10 +197,31 @@ async fn api_disconnect(
 async fn ws_handler(
     ws: WebSocketUpgrade,
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Query(query): Query<WsAuthQuery>,
     State(state): State<AppState>,
 ) -> Response {
     let remote_ip = remote_addr.ip().to_string();
+
+    // CSWSH Protection: Validate Origin if provided by browser
+    if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        let is_allowed = origin.starts_with("http://localhost")
+            || origin.starts_with("https://localhost")
+            || origin.starts_with("http://127.0.0.1")
+            || origin.starts_with("https://127.0.0.1")
+            || origin.starts_with("http://[::1]")
+            || origin.starts_with("http://192.168.")
+            || origin.starts_with("http://10.")
+            || origin.starts_with("http://172.");
+        if !is_allowed {
+            warn!("Rejected WebSocket connection with untrusted external Origin: {origin}");
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Cross-origin WebSocket connection forbidden" })),
+            )
+                .into_response();
+        }
+    }
 
     // Verify pairing code or token
     let session_token = if let Some(ref token) = query.token {
@@ -373,10 +394,30 @@ async fn handle_controller_socket(
         }
     });
     let mut last_sequence = None;
+    let mut rumble_rx = {
+        let slot = state.controllers[slot_index].lock().unwrap();
+        slot.controller.subscribe_rumble()
+    };
 
     // Socket input loop
     loop {
         tokio::select! {
+            rumble_changed = async {
+                match &mut rumble_rx {
+                    Some(rx) => rx.changed().await.ok(),
+                    None => std::future::pending::<Option<()>>().await,
+                }
+            } => {
+                if rumble_changed.is_some() {
+                    if let Some(rx) = &mut rumble_rx {
+                        let (large, small) = *rx.borrow_and_update();
+                        let packet = Protocol::encode_rumble(large, small);
+                        if socket.send(Message::Binary(packet.to_vec())).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
             _ = &mut drop_rx => {
                 let _ = socket.close().await;
                 break;
@@ -425,7 +466,7 @@ async fn handle_controller_socket(
                                     break;
                                 }
                             }
-                            Ok(Packet::Pong(_)) => {}
+                            Ok(Packet::Pong(_)) | Ok(Packet::Rumble { .. }) => {}
                             Err(_) => {
                                 state.diagnostics.record_malformed_packet();
                             }

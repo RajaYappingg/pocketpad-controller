@@ -9,6 +9,7 @@ export const PACKET_TYPE = {
   INPUT: 0x01,
   PING: 0x02,
   PONG: 0x03,
+  RUMBLE: 0x04,
   AUTH_REQ: 0x10,
   AUTH_RES: 0x11,
 } as const;
@@ -71,5 +72,19 @@ export class BinaryProtocolEncoder {
     if (v.getUint8(0) !== PROTOCOL_MAGIC || v.getUint8(1) !== PROTOCOL_VERSION) return null;
     if (v.getUint8(2) !== PACKET_TYPE.PONG) return null;
     return v.getUint32(3, true);
+  }
+
+  /**
+   * Parses rumble force-feedback packet: { largeMotor, smallMotor }
+   */
+  public static decodeRumble(data: ArrayBuffer): { largeMotor: number; smallMotor: number } | null {
+    if (data.byteLength < 5) return null;
+    const v = new DataView(data);
+    if (v.getUint8(0) !== PROTOCOL_MAGIC || v.getUint8(1) !== PROTOCOL_VERSION) return null;
+    if (v.getUint8(2) !== PACKET_TYPE.RUMBLE) return null;
+    return {
+      largeMotor: v.getUint8(3),
+      smallMotor: v.getUint8(4),
+    };
   }
 }

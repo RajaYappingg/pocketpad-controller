@@ -46,12 +46,17 @@ pub trait VirtualController: Send + Sync {
 
     /// Returns the human-readable backend name
     fn backend_name(&self) -> &'static str;
+
+    /// Subscribes to rumble force feedback updates (large_motor, small_motor)
+    fn subscribe_rumble(&self) -> Option<tokio::sync::watch::Receiver<(u8, u8)>>;
 }
 
 /// Real Windows Xbox 360 Virtual Controller Backend using ViGEmBus
 pub struct ViGEmXbox360Backend {
     target: Xbox360Wired<Client>,
     plugged_in: bool,
+    rumble_rx: tokio::sync::watch::Receiver<(u8, u8)>,
+    _notification_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl ViGEmXbox360Backend {
@@ -67,9 +72,26 @@ impl ViGEmXbox360Backend {
         let neutral = XGamepad::default();
         let _ = target.update(&neutral);
 
+        // Register rumble force feedback notification listener
+        let (rumble_tx, rumble_rx) = tokio::sync::watch::channel::<(u8, u8)>((0, 0));
+        let notification_handle = match target.request_notification() {
+            Ok(req) => {
+                let handle = req.spawn_thread(move |_, notif| {
+                    let _ = rumble_tx.send((notif.large_motor, notif.small_motor));
+                });
+                Some(handle)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to register rumble notification handler: {e:?}");
+                None
+            }
+        };
+
         Ok(Self {
             target,
             plugged_in: true,
+            rumble_rx,
+            _notification_handle: notification_handle,
         })
     }
 }
@@ -116,6 +138,10 @@ impl VirtualController for ViGEmXbox360Backend {
     fn backend_name(&self) -> &'static str {
         "ViGEmBus (Xbox 360)"
     }
+
+    fn subscribe_rumble(&self) -> Option<tokio::sync::watch::Receiver<(u8, u8)>> {
+        Some(self.rumble_rx.clone())
+    }
 }
 
 impl Drop for ViGEmXbox360Backend {
@@ -133,14 +159,19 @@ pub struct MockVirtualController {
     pub last_state: ControllerState,
     pub is_plugged_in: bool,
     pub update_count: usize,
+    pub rumble_tx: tokio::sync::watch::Sender<(u8, u8)>,
+    pub rumble_rx: tokio::sync::watch::Receiver<(u8, u8)>,
 }
 
 impl MockVirtualController {
     pub fn new() -> Self {
+        let (rumble_tx, rumble_rx) = tokio::sync::watch::channel((0, 0));
         Self {
             last_state: ControllerState::neutral(),
             is_plugged_in: true,
             update_count: 0,
+            rumble_tx,
+            rumble_rx,
         }
     }
 }
@@ -177,6 +208,10 @@ impl VirtualController for MockVirtualController {
 
     fn backend_name(&self) -> &'static str {
         "Mock Controller (Unit Test / Offline)"
+    }
+
+    fn subscribe_rumble(&self) -> Option<tokio::sync::watch::Receiver<(u8, u8)>> {
+        Some(self.rumble_rx.clone())
     }
 }
 

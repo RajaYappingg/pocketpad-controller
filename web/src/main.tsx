@@ -6,3 +6,11 @@ const root = document.getElementById('app');
 if (root) {
   render(<App />, root);
 }
+
+if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.protocol === 'http:')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.debug('PocketPad ServiceWorker registration:', err);
+    });
+  });
+}

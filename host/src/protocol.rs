@@ -6,6 +6,7 @@ pub const PROTOCOL_VERSION: u8 = 0x01;
 pub const PACKET_TYPE_INPUT: u8 = 0x01;
 pub const PACKET_TYPE_PING: u8 = 0x02;
 pub const PACKET_TYPE_PONG: u8 = 0x03;
+pub const PACKET_TYPE_RUMBLE: u8 = 0x04;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RawInputPacket {
@@ -24,6 +25,7 @@ pub enum Packet {
     Input(RawInputPacket),
     Ping(u32),
     Pong(u32),
+    Rumble { large_motor: u8, small_motor: u8 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +147,24 @@ impl Protocol {
                 let timestamp = u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]);
                 Ok(Packet::Pong(timestamp))
             }
+            PACKET_TYPE_RUMBLE => {
+                if bytes.len() < 5 {
+                    return Err(ProtocolError::TooShort {
+                        expected: 5,
+                        actual: bytes.len(),
+                    });
+                }
+                if bytes.len() != 5 {
+                    return Err(ProtocolError::UnexpectedLength {
+                        expected: 5,
+                        actual: bytes.len(),
+                    });
+                }
+                Ok(Packet::Rumble {
+                    large_motor: bytes[3],
+                    small_motor: bytes[4],
+                })
+            }
             other => Err(ProtocolError::UnknownPacketType(other)),
         }
     }
@@ -160,6 +180,17 @@ impl Protocol {
             ts_bytes[1],
             ts_bytes[2],
             ts_bytes[3],
+        ]
+    }
+
+    /// Encodes a rumble packet into a 5-byte buffer
+    pub fn encode_rumble(large_motor: u8, small_motor: u8) -> [u8; 5] {
+        [
+            PROTOCOL_MAGIC,
+            PROTOCOL_VERSION,
+            PACKET_TYPE_RUMBLE,
+            large_motor,
+            small_motor,
         ]
     }
 }
@@ -218,6 +249,20 @@ mod tests {
         let pong_bytes = Protocol::encode_pong(0xdeadbeef);
         let decoded_pong = Protocol::decode(&pong_bytes).unwrap();
         assert_eq!(decoded_pong, Packet::Pong(0xdeadbeef));
+    }
+
+    #[test]
+    fn test_encode_decode_rumble() {
+        let rumble_bytes = Protocol::encode_rumble(210, 85);
+        assert_eq!(rumble_bytes.len(), 5);
+        let decoded = Protocol::decode(&rumble_bytes).unwrap();
+        assert_eq!(
+            decoded,
+            Packet::Rumble {
+                large_motor: 210,
+                small_motor: 85,
+            }
+        );
     }
 
     #[test]
