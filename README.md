@@ -1,4 +1,5 @@
 <div align="center">
+<img width="2172" height="724" alt="image" src="https://github.com/user-attachments/assets/44c1fffe-2942-4a7b-bd83-41b043f9b223" />
 
 # 🎮 PocketPad
 
