@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "preact": "^10.22.0",
+    "preact": "^11.0.2",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
